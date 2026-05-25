@@ -1,0 +1,359 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// env читается из корневого .env через dotenv-cli в скриптах
+// либо через DATABASE_URL в окружении при запуске
+
+// ---------------------------------------------------------------------------
+// Organization — клиент сервиса (один портал Битрикс24)
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id             String  @id @default(cuid())
+  name           String
+  bitrixPortalId String  @unique
+  bitrixWebhook  String  // B24_INCOMING_WEBHOOK; в Фазе 2 заменится на OAuth-токены
+  isActive       Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  settings         OrganizationSettings?
+  bitrixUsers      BitrixUser[]
+  customerRatings  CustomerRating[]
+  creditLimits     CreditLimit[]
+  reminders        Reminder[]
+  promises         Promise[]
+  wazzupChannels   WazzupChannel[]
+  scheduleJobs     ScheduleJob[]
+  auditLogs        AuditLog[]
+  aiActions        AiAction[]
+  webhookProcessed WebhookProcessed[]
+}
+
+// ---------------------------------------------------------------------------
+// OrganizationSettings — конфигурация бизнес-правил на организацию
+// Все пороги, тоны, шаблоны, расписания — здесь, не в коде
+// ---------------------------------------------------------------------------
+
+model OrganizationSettings {
+  id             String       @id @default(cuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  // Пороги для рейтингов (см. CLAUDE.md → Рейтинг клиента)
+  ratingRules Json
+  // Правила изменения кредитного лимита
+  limitRules Json
+  // Тоны напоминаний по дням просрочки (0-3 / 4-10 / 11-30 / 30+)
+  reminderTones Json
+  // Расписания воркеров: cron-выражения
+  scheduleConfig Json
+  // Ссылки на промпт-файлы по сценарию
+  templateConfig Json
+  // Максимум исходящих сообщений в минуту на канал Wazzup
+  wazzupRateLimit Int @default(30)
+
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// BitrixUser — пользователи Битрикса с ролями в нашей системе
+// ---------------------------------------------------------------------------
+
+model BitrixUser {
+  id             String           @id @default(cuid())
+  organizationId String
+  organization   Organization     @relation(fields: [organizationId], references: [id])
+  bitrixUserId   String
+  role           BitrixUserRole
+  isActive       Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+
+  @@unique([organizationId, bitrixUserId])
+  @@index([organizationId])
+}
+
+enum BitrixUserRole {
+  OWNER         // Собственник: получает Telegram-сводки, подтверждает лимиты
+  FIN_MANAGER   // Финансовый менеджер: ведёт дебиторку, получает эскалации
+  SALES_MANAGER // Менеджер по продажам: ведёт переписку с клиентами
+}
+
+// ---------------------------------------------------------------------------
+// CustomerRating — рейтинг клиента + полная история изменений
+// Каждая запись = один факт изменения рейтинга
+// ---------------------------------------------------------------------------
+
+model CustomerRating {
+  id             String              @id @default(cuid())
+  organizationId String
+  organization   Organization        @relation(fields: [organizationId], references: [id])
+  contactId      String              // Битрикс contact ID
+  rating         CustomerRatingValue
+  previousRating CustomerRatingValue?
+  changedBy      String              // 'system' или bitrixUserId
+  overrideReason String?             // Обязательно если changedBy != 'system'
+  changedAt      DateTime            @default(now())
+
+  @@index([organizationId, contactId])
+  @@index([organizationId, changedAt])
+}
+
+enum CustomerRatingValue {
+  RELIABLE  // Надёжный: 0 просрочек за 6 мес, ≥5 оплат
+  NORMAL    // Нормальный: 1-2 просрочки ≤7 дней
+  RISK      // Риск: 3+ просрочки или одна >14 дней
+  DANGEROUS // Опасный: просрочка >30 дней или 2+ невыполненных обещания
+  STOP      // STOP: просрочка >60 дней или долг > лимит × 2
+}
+
+// ---------------------------------------------------------------------------
+// CreditLimit — кредитный лимит + история изменений
+// Изменения применяются только после подтверждения (status APPROVED)
+// ---------------------------------------------------------------------------
+
+model CreditLimit {
+  id             String            @id @default(cuid())
+  organizationId String
+  organization   Organization      @relation(fields: [organizationId], references: [id])
+  contactId      String
+  // Суммы в минорных единицах (тиыны). Никогда не float.
+  limitAmount    BigInt
+  previousAmount BigInt?
+  currency       String            @default("KZT")
+  status         CreditLimitStatus @default(PENDING)
+  changedBy      String            // 'system' или bitrixUserId
+  approvedBy     String?           // bitrixUserId подтвердившего
+  approvedAt     DateTime?
+  changedAt      DateTime          @default(now())
+
+  @@index([organizationId, contactId])
+  @@index([organizationId, status])
+}
+
+enum CreditLimitStatus {
+  PENDING  // Ожидает подтверждения собственником
+  APPROVED // Подтверждено
+  REJECTED // Отклонено
+}
+
+// ---------------------------------------------------------------------------
+// Reminder — каждое касание по дебиторке (авто или менеджером)
+// ---------------------------------------------------------------------------
+
+model Reminder {
+  id              String          @id @default(cuid())
+  organizationId  String
+  organization    Organization    @relation(fields: [organizationId], references: [id])
+  contactId       String          // Битрикс contact ID
+  dealId          String?         // Битрикс deal ID
+  channel         ReminderChannel
+  source          ReminderSource  // Кто инициировал: система или менеджер
+  tone            ReminderTone
+  templateKey     String?         // Ключ промпта (только для source=AUTO)
+  messageText     String
+  wazzupMessageId String?         // ID в Wazzup для дедупликации
+  status          ReminderStatus  @default(PENDING)
+  sentAt          DateTime?
+  clientReply     String?
+  replyReceivedAt DateTime?
+  intent          ReplyIntent?    // Результат парсинга ответа клиентом
+  aiActionId      String?
+  aiAction        AiAction?       @relation(fields: [aiActionId], references: [id])
+  createdAt       DateTime        @default(now())
+
+  promise Promise?
+
+  @@index([organizationId, contactId])
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
+}
+
+enum ReminderChannel {
+  WHATSAPP
+}
+
+enum ReminderSource {
+  AUTO    // Воркер инициировал и отправил
+  MANAGER // Менеджер написал сам, система зафиксировала из Wazzup webhook
+}
+
+enum ReminderTone {
+  SOFT   // 0-3 дня просрочки
+  FIRM   // 4-10 дней
+  STRICT // 11-30 дней
+  FINAL  // 30+ дней
+}
+
+enum ReminderStatus {
+  PENDING   // В очереди на отправку
+  SENT      // Отправлено в Wazzup
+  DELIVERED // Доставлено (если Wazzup подтвердил)
+  FAILED    // Ошибка отправки
+  REPLIED   // Получен ответ от клиента
+}
+
+enum ReplyIntent {
+  PROMISE_TO_PAY // «переведу в среду», «оплачу завтра»
+  PAID           // «уже перевёл», «оплатил вчера»
+  DISPUTE        // «не согласен с суммой», «у меня другие данные»
+  REQUEST_DELAY  // «можно ещё неделю», «дайте отсрочку»
+  OTHER          // Ответ не по теме или неразборчиво
+}
+
+// ---------------------------------------------------------------------------
+// Promise — обещание оплаты, извлечённое из ответа клиента
+// ---------------------------------------------------------------------------
+
+model Promise {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  contactId      String
+  reminderId     String        @unique
+  reminder       Reminder      @relation(fields: [reminderId], references: [id])
+  // Сумма в минорных единицах. Может быть null если клиент не назвал сумму.
+  amount         BigInt?
+  currency       String        @default("KZT")
+  promisedDate   DateTime
+  status         PromiseStatus @default(PENDING)
+  resolvedAt     DateTime?
+  createdAt      DateTime      @default(now())
+
+  @@index([organizationId, contactId])
+  @@index([organizationId, promisedDate])
+  @@index([organizationId, status])
+}
+
+enum PromiseStatus {
+  PENDING   // Ждём даты оплаты
+  FULFILLED // Оплата поступила
+  BROKEN    // Дата прошла, оплаты нет
+  CANCELLED // Отменено вручную
+}
+
+// ---------------------------------------------------------------------------
+// AiAction — лог каждого вызова Claude API
+// Основа для тарификации в Фазе 2
+// ---------------------------------------------------------------------------
+
+model AiAction {
+  id             String        @id @default(cuid())
+  // nullable: системные вызовы не привязаны к организации
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  scenario       String        // 'generate-reminder' | 'parse-reply' | 'explain-trend'
+  promptVersion  String        // 'v1', 'v2' — версия файла из packages/ai/prompts/
+  model          String        // 'claude-haiku-4-5-20251001' | 'claude-sonnet-4-6'
+  inputSummary   String        // Краткое описание входных данных (не полный промпт)
+  outputSummary  String?
+  inputTokens    Int
+  outputTokens   Int
+  latencyMs      Int
+  // Стоимость в микродолларах (×1_000_000 от USD) — точность без float
+  costMicrodollars Int
+  success        Boolean
+  errorMessage   String?
+  createdAt      DateTime      @default(now())
+
+  reminders Reminder[]
+
+  @@index([organizationId, scenario])
+  @@index([organizationId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// WazzupChannel — WhatsApp-каналы организации в Wazzup
+// Каждый менеджер = отдельный канал
+// ---------------------------------------------------------------------------
+
+model WazzupChannel {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  channelId      String       // ID канала в Wazzup API
+  phone          String       // Номер телефона менеджера
+  managerName    String?
+  bitrixUserId   String?      // Связь с BitrixUser
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, channelId])
+  @@index([organizationId])
+}
+
+// ---------------------------------------------------------------------------
+// ScheduleJob — расписания воркеров на организацию
+// ---------------------------------------------------------------------------
+
+model ScheduleJob {
+  id             String          @id @default(cuid())
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  jobType        ScheduleJobType
+  cronExpression String
+  isActive       Boolean         @default(true)
+  lastRunAt      DateTime?
+  nextRunAt      DateTime?
+  lastStatus     String?         // 'success' | 'failed' | сообщение об ошибке
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@unique([organizationId, jobType])
+}
+
+enum ScheduleJobType {
+  DAILY_OVERDUE_CHECK // Проверка просрочек и запуск напоминаний
+  RATING_RECALC       // Пересчёт рейтингов клиентов
+  MORNING_DIGEST      // Утренняя сводка собственнику в Telegram
+  PROMISE_FOLLOWUP    // Проверка выполнения обещаний оплаты
+}
+
+// ---------------------------------------------------------------------------
+// AuditLog — лог значимых действий для разборок
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  actor          String       // 'system' или bitrixUserId
+  action         String       // 'rating.changed' | 'limit.approved' | 'promise.broken'
+  entityType     String       // 'CustomerRating' | 'CreditLimit' | 'Promise'
+  entityId       String
+  before         Json?
+  after          Json?
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, entityType, entityId])
+  @@index([organizationId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// WebhookProcessed — дедупликация входящих webhook'ов
+// Один event_id обрабатывается ровно один раз
+// ---------------------------------------------------------------------------
+
+model WebhookProcessed {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  source         WebhookSource
+  eventId        String
+  processedAt    DateTime      @default(now())
+
+  @@unique([source, eventId])
+  @@index([organizationId])
+}
+
+enum WebhookSource {
+  BITRIX
+  WAZZUP
+}

@@ -1,0 +1,28 @@
+{
+  "name": "@repo/worker",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@repo/ai": "workspace:*",
+    "@repo/bitrix": "workspace:*",
+    "@repo/db": "workspace:*",
+    "@repo/messaging": "workspace:*",
+    "@repo/rules": "workspace:*",
+    "@repo/shared": "workspace:*",
+    "bullmq": "^5.0.0",
+    "ioredis": "^5.0.0",
+    "pino": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.0.0"
+  }
+}
