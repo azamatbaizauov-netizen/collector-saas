@@ -7,6 +7,7 @@ import { processMorningDigest } from './jobs/morning-digest.js';
 import { processPromiseFollowup } from './jobs/promise-followup.js';
 import { processDebtSheetPoll } from './jobs/debt-sheet-poll.js';
 import { processInboundMessage } from './jobs/inbound-message.js';
+import { registerScheduleJobs } from './scheduler.js';
 import pino from 'pino';
 
 const log = pino({ level: process.env['LOG_LEVEL'] ?? 'info' });
@@ -49,5 +50,7 @@ const messagesWorker = new Worker(
 );
 
 messagesWorker.on('failed', (job, err) => log.error({ jobId: job?.id, err }, 'Message job failed'));
+
+await registerScheduleJobs(log);
 
 log.info('Worker started');

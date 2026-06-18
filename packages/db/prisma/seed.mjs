@@ -32,6 +32,7 @@ const DEFAULT_SETTINGS = {
     ratingRecalc: '0 2 * * *',
     dailyCallList: '0 7 * * *',
     ownerSummary: '0 8 * * *',
+    debtSheetPoll: '*/15 * * * *', // опрос Google Sheet дебиторки каждые 15 мин (ADR 0003)
   },
   templateConfig: {
     generateReminder: 'reminders/v1',
@@ -74,6 +75,22 @@ async function seedManagers(orgId) {
   }
 }
 
+// Расписания воркеров (ScheduleJob) — источник истины по cron на организацию.
+// Регистратор воркера превращает активные строки в BullMQ Job Schedulers.
+// Пока бутстрапим только DEBT_SHEET_POLL (импорт дебиторки); остальные job-типы
+// подключим, когда их обработчики перестанут быть заглушками.
+async function seedScheduleJobs(orgId, scheduleConfig) {
+  const jobs = [{ jobType: 'DEBT_SHEET_POLL', cron: scheduleConfig.debtSheetPoll }];
+  for (const j of jobs) {
+    await prisma.scheduleJob.upsert({
+      where: { organizationId_jobType: { organizationId: orgId, jobType: j.jobType } },
+      update: { cronExpression: j.cron, isActive: true },
+      create: { organizationId: orgId, jobType: j.jobType, cronExpression: j.cron, isActive: true },
+    });
+    console.log(`ScheduleJob: ${j.jobType} → ${j.cron}`);
+  }
+}
+
 async function main() {
   const org = await prisma.organization.upsert({
     where: { id: ORG_ID },
@@ -95,6 +112,8 @@ async function main() {
   console.log('OrganizationSettings: ok');
 
   await seedManagers(org.id);
+
+  await seedScheduleJobs(org.id, DEFAULT_SETTINGS.scheduleConfig);
 
   // WhatsApp-канал бутстрапится из env, чтобы токен инстанса не попадал в git.
   // Источник истины после seed — таблица WhatsAppChannel.
