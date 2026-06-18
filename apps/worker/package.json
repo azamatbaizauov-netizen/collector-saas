@@ -18,6 +18,7 @@
     "@repo/rules": "workspace:*",
     "@repo/shared": "workspace:*",
     "bullmq": "^5.0.0",
+    "grammy": "^1.30.0",
     "ioredis": "^5.0.0",
     "pino": "^9.0.0"
   },

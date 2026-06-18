@@ -77,10 +77,15 @@ async function seedManagers(orgId) {
 
 // Расписания воркеров (ScheduleJob) — источник истины по cron на организацию.
 // Регистратор воркера превращает активные строки в BullMQ Job Schedulers.
-// Пока бутстрапим только DEBT_SHEET_POLL (импорт дебиторки); остальные job-типы
-// подключим, когда их обработчики перестанут быть заглушками.
+// RATING_RECALC/PROMISE_FOLLOWUP пока заглушки — не бутстрапим, чтобы не
+// гонять пустые задачи. DAILY_PLAN/MORNING_DIGEST шлют в Telegram и деградируют
+// с warn, пока не настроен TELEGRAM_BOT_TOKEN/chat id (ADR 0004).
 async function seedScheduleJobs(orgId, scheduleConfig) {
-  const jobs = [{ jobType: 'DEBT_SHEET_POLL', cron: scheduleConfig.debtSheetPoll }];
+  const jobs = [
+    { jobType: 'DEBT_SHEET_POLL', cron: scheduleConfig.debtSheetPoll },
+    { jobType: 'DAILY_PLAN', cron: scheduleConfig.dailyCallList },
+    { jobType: 'MORNING_DIGEST', cron: scheduleConfig.ownerSummary },
+  ];
   for (const j of jobs) {
     await prisma.scheduleJob.upsert({
       where: { organizationId_jobType: { organizationId: orgId, jobType: j.jobType } },

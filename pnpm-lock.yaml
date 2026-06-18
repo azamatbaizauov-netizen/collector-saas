@@ -164,6 +164,9 @@ importers:
       bullmq:
         specifier: ^5.0.0
         version: 5.77.2
+      grammy:
+        specifier: ^1.30.0
+        version: 1.43.0
       ioredis:
         specifier: ^5.0.0
         version: 5.10.1

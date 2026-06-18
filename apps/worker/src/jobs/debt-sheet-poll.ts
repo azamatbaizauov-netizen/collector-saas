@@ -1,6 +1,6 @@
 import { prisma } from '@repo/db';
-import { normalizeDebtRow, type AliasMap, type AliasResolution } from '@repo/rules';
-import { GoogleSheetDebtSource } from '@repo/debt-source';
+import { normalizeDebtRow } from '@repo/rules';
+import { getDebtSource, loadAliasMap } from '../debt-data.js';
 import pino from 'pino';
 
 const log = pino({ level: process.env['LOG_LEVEL'] ?? 'info' });
@@ -9,30 +9,14 @@ const log = pino({ level: process.env['LOG_LEVEL'] ?? 'info' });
 // импортируем только когда файл реально менялся. Снапшот — технический буфер
 // для нормализации, НЕ вторая копия дебиторки.
 
-// Алиасы менеджеров из БД (ManagerSheetAlias + Manager.isOwner) → карта матчинга.
-async function loadAliasMap(organizationId: string): Promise<AliasMap> {
-  const rows = await prisma.managerSheetAlias.findMany({
-    where: { organizationId },
-    select: { normalizedAlias: true, managerId: true, manager: { select: { isOwner: true } } },
-  });
-  const map = new Map<string, AliasResolution>();
-  for (const r of rows) {
-    map.set(r.normalizedAlias, { managerId: r.managerId, isOwner: r.manager.isOwner });
-  }
-  return map;
-}
-
 export async function processDebtSheetPoll(data: { organizationId: string }): Promise<void> {
   const { organizationId } = data;
 
-  const credentialsPath = process.env['GOOGLE_APPLICATION_CREDENTIALS'];
-  const fileId = process.env['DEBT_SHEET_FILE_ID'];
-  if (!credentialsPath || !fileId) {
+  const source = getDebtSource();
+  if (!source) {
     log.warn({ organizationId }, 'DEBT_SHEET_POLL: нет GOOGLE_APPLICATION_CREDENTIALS/DEBT_SHEET_FILE_ID, пропуск');
     return;
   }
-
-  const source = new GoogleSheetDebtSource({ credentialsPath, fileId });
 
   const state = await prisma.debtSheetState.findUnique({ where: { organizationId } });
   const meta = await source.getMetadata();
