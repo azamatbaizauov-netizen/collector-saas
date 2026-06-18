@@ -1,9 +1,11 @@
 import { Worker } from 'bullmq';
+import type { InboundMessageJob } from '@repo/messaging';
 import { connection } from './redis.js';
 import { processRatingRecalc } from './jobs/rating-recalc.js';
 import { processOverdueCheck } from './jobs/overdue-check.js';
 import { processMorningDigest } from './jobs/morning-digest.js';
 import { processPromiseFollowup } from './jobs/promise-followup.js';
+import { processInboundMessage } from './jobs/inbound-message.js';
 import pino from 'pino';
 
 const log = pino({ level: process.env['LOG_LEVEL'] ?? 'info' });
@@ -30,5 +32,19 @@ const worker = new Worker(
 
 worker.on('completed', (job) => log.info({ jobId: job.id }, 'Job completed'));
 worker.on('failed', (job, err) => log.error({ jobId: job?.id, err }, 'Job failed'));
+
+const messagesWorker = new Worker(
+  'messages',
+  async (job) => {
+    log.info({ jobType: job.name, jobId: job.id }, 'Processing message job');
+    if (job.name === 'INBOUND_MESSAGE') {
+      return processInboundMessage(job.data as InboundMessageJob, log);
+    }
+    log.warn({ jobName: job.name }, 'Unknown message job type');
+  },
+  { connection },
+);
+
+messagesWorker.on('failed', (job, err) => log.error({ jobId: job?.id, err }, 'Message job failed'));
 
 log.info('Worker started');

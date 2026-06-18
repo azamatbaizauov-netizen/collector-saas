@@ -4,7 +4,10 @@ import pino from 'pino';
 const log = pino({ level: process.env['LOG_LEVEL'] ?? 'info' });
 
 const token = process.env['TELEGRAM_BOT_TOKEN'];
-if (!token) throw new Error('TELEGRAM_BOT_TOKEN is not set');
+if (!token) {
+  log.warn('TELEGRAM_BOT_TOKEN is not set — bot will not start');
+  process.exit(0);
+}
 
 const bot = new Bot(token);
 

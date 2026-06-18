@@ -18,23 +18,25 @@ model Organization {
   id             String  @id @default(cuid())
   name           String
   bitrixPortalId String  @unique
-  bitrixWebhook  String  // B24_INCOMING_WEBHOOK; в Фазе 2 заменится на OAuth-токены
+  bitrixWebhook  String // B24_INCOMING_WEBHOOK; в Фазе 2 заменится на OAuth-токены
   isActive       Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  settings         OrganizationSettings?
-  bitrixUsers      BitrixUser[]
-  customerRatings  CustomerRating[]
-  creditLimits     CreditLimit[]
-  reminders        Reminder[]
-  promises         Promise[]
-  wazzupChannels   WazzupChannel[]
-  scheduleJobs     ScheduleJob[]
-  auditLogs        AuditLog[]
-  aiActions        AiAction[]
-  webhookProcessed WebhookProcessed[]
+  settings            OrganizationSettings?
+  bitrixUsers         BitrixUser[]
+  managers            Manager[]
+  managerSheetAliases ManagerSheetAlias[]
+  customerRatings     CustomerRating[]
+  creditLimits        CreditLimit[]
+  reminders           Reminder[]
+  promises            Promise[]
+  whatsappChannels    WhatsAppChannel[]
+  scheduleJobs        ScheduleJob[]
+  auditLogs           AuditLog[]
+  aiActions           AiAction[]
+  webhookProcessed    WebhookProcessed[]
 }
 
 // ---------------------------------------------------------------------------
@@ -48,17 +50,21 @@ model OrganizationSettings {
   organization   Organization @relation(fields: [organizationId], references: [id])
 
   // Пороги для рейтингов (см. CLAUDE.md → Рейтинг клиента)
-  ratingRules Json
+  ratingRules       Json
   // Правила изменения кредитного лимита
-  limitRules Json
+  limitRules        Json
   // Тоны напоминаний по дням просрочки (0-3 / 4-10 / 11-30 / 30+)
-  reminderTones Json
+  reminderTones     Json
   // Расписания воркеров: cron-выражения
-  scheduleConfig Json
+  scheduleConfig    Json
   // Ссылки на промпт-файлы по сценарию
-  templateConfig Json
-  // Максимум исходящих сообщений в минуту на канал Wazzup
-  wazzupRateLimit Int @default(30)
+  templateConfig    Json
+  // Максимум исходящих сообщений в минуту на канал WhatsApp
+  whatsappRateLimit Int  @default(30)
+
+  // Telegram: общий чат [собственник + МОПы] и личка собственника (ADR 0004)
+  telegramGroupChatId String?
+  ownerTelegramUserId String?
 
   updatedAt DateTime @updatedAt
 }
@@ -68,22 +74,69 @@ model OrganizationSettings {
 // ---------------------------------------------------------------------------
 
 model BitrixUser {
-  id             String           @id @default(cuid())
+  id             String         @id @default(cuid())
   organizationId String
-  organization   Organization     @relation(fields: [organizationId], references: [id])
+  organization   Organization   @relation(fields: [organizationId], references: [id])
   bitrixUserId   String
   role           BitrixUserRole
-  isActive       Boolean          @default(true)
-  createdAt      DateTime         @default(now())
+  isActive       Boolean        @default(true)
+  createdAt      DateTime       @default(now())
 
   @@unique([organizationId, bitrixUserId])
   @@index([organizationId])
 }
 
 enum BitrixUserRole {
-  OWNER         // Собственник: получает Telegram-сводки, подтверждает лимиты
-  FIN_MANAGER   // Финансовый менеджер: ведёт дебиторку, получает эскалации
+  OWNER // Собственник: получает Telegram-сводки, подтверждает лимиты
+  FIN_MANAGER // Финансовый менеджер: ведёт дебиторку, получает эскалации
   SALES_MANAGER // Менеджер по продажам: ведёт переписку с клиентами
+}
+
+// ---------------------------------------------------------------------------
+// Manager — менеджер (МОП) как личность. Связывает идентичности из
+// Google Sheet / Telegram / WhatsApp / Битрикса. См. ADR 0005.
+// Отдельно от BitrixUser: на пилоте у МОПа может не быть аккаунта в Битриксе.
+// ---------------------------------------------------------------------------
+
+model Manager {
+  id               String       @id @default(cuid())
+  organizationId   String
+  organization     Organization @relation(fields: [organizationId], references: [id])
+  fullName         String // канон. имя, как мы его знаем
+  telegramUserId   String? // узнаём при первом /start боту; null пока не привязан
+  telegramUsername String? // @handle для адресных задач (механика 1, ADR 0004)
+  bitrixUserId     String? // опц. связь с BitrixUser, если аккаунт есть
+  isOwner          Boolean      @default(false) // владелец: его клиенты не идут в счётчик задач менеджерам, по ним MORNING_DIGEST в личку (ADR 0005)
+  isActive         Boolean      @default(true)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  sheetAliases     ManagerSheetAlias[]
+  whatsappChannels WhatsAppChannel[]
+
+  @@unique([organizationId, telegramUserId])
+  @@index([organizationId])
+}
+
+// ---------------------------------------------------------------------------
+// ManagerSheetAlias — как имя менеджера пишут в колонке "МОП" Google Sheet.
+// Free-text с вариантами: один менеджер = несколько псевдонимов.
+// Приставка "Медет" (= собственник) относится к менеджеру из первого слова:
+// "адилбек медет" → Адилбек. См. ADR 0005.
+// ---------------------------------------------------------------------------
+
+model ManagerSheetAlias {
+  id              String       @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  managerId       String
+  manager         Manager      @relation(fields: [managerId], references: [id])
+  alias           String // исходный текст ячейки: "Амир Медет"
+  normalizedAlias String // lower+trim для матчинга: "амир медет"
+  createdAt       DateTime     @default(now())
+
+  @@unique([organizationId, normalizedAlias]) // один псевдоним → один менеджер
+  @@index([managerId])
 }
 
 // ---------------------------------------------------------------------------
@@ -92,26 +145,26 @@ enum BitrixUserRole {
 // ---------------------------------------------------------------------------
 
 model CustomerRating {
-  id             String              @id @default(cuid())
+  id             String               @id @default(cuid())
   organizationId String
-  organization   Organization        @relation(fields: [organizationId], references: [id])
-  contactId      String              // Битрикс contact ID
+  organization   Organization         @relation(fields: [organizationId], references: [id])
+  contactId      String // Битрикс contact ID
   rating         CustomerRatingValue
   previousRating CustomerRatingValue?
-  changedBy      String              // 'system' или bitrixUserId
-  overrideReason String?             // Обязательно если changedBy != 'system'
-  changedAt      DateTime            @default(now())
+  changedBy      String // 'system' или bitrixUserId
+  overrideReason String? // Обязательно если changedBy != 'system'
+  changedAt      DateTime             @default(now())
 
   @@index([organizationId, contactId])
   @@index([organizationId, changedAt])
 }
 
 enum CustomerRatingValue {
-  RELIABLE  // Надёжный: 0 просрочек за 6 мес, ≥5 оплат
-  NORMAL    // Нормальный: 1-2 просрочки ≤7 дней
-  RISK      // Риск: 3+ просрочки или одна >14 дней
+  RELIABLE // Надёжный: 0 просрочек за 6 мес, ≥5 оплат
+  NORMAL // Нормальный: 1-2 просрочки ≤7 дней
+  RISK // Риск: 3+ просрочки или одна >14 дней
   DANGEROUS // Опасный: просрочка >30 дней или 2+ невыполненных обещания
-  STOP      // STOP: просрочка >60 дней или долг > лимит × 2
+  STOP // STOP: просрочка >60 дней или долг > лимит × 2
 }
 
 // ---------------------------------------------------------------------------
@@ -127,10 +180,10 @@ model CreditLimit {
   // Суммы в минорных единицах (тиыны). Никогда не float.
   limitAmount    BigInt
   previousAmount BigInt?
-  currency       String            @default("KZT")
+  currency       String            @default("USD")
   status         CreditLimitStatus @default(PENDING)
-  changedBy      String            // 'system' или bitrixUserId
-  approvedBy     String?           // bitrixUserId подтвердившего
+  changedBy      String // 'system' или bitrixUserId
+  approvedBy     String? // bitrixUserId подтвердившего
   approvedAt     DateTime?
   changedAt      DateTime          @default(now())
 
@@ -139,7 +192,7 @@ model CreditLimit {
 }
 
 enum CreditLimitStatus {
-  PENDING  // Ожидает подтверждения собственником
+  PENDING // Ожидает подтверждения собственником
   APPROVED // Подтверждено
   REJECTED // Отклонено
 }
@@ -149,25 +202,25 @@ enum CreditLimitStatus {
 // ---------------------------------------------------------------------------
 
 model Reminder {
-  id              String          @id @default(cuid())
-  organizationId  String
-  organization    Organization    @relation(fields: [organizationId], references: [id])
-  contactId       String          // Битрикс contact ID
-  dealId          String?         // Битрикс deal ID
-  channel         ReminderChannel
-  source          ReminderSource  // Кто инициировал: система или менеджер
-  tone            ReminderTone
-  templateKey     String?         // Ключ промпта (только для source=AUTO)
-  messageText     String
-  wazzupMessageId String?         // ID в Wazzup для дедупликации
-  status          ReminderStatus  @default(PENDING)
-  sentAt          DateTime?
-  clientReply     String?
-  replyReceivedAt DateTime?
-  intent          ReplyIntent?    // Результат парсинга ответа клиентом
-  aiActionId      String?
-  aiAction        AiAction?       @relation(fields: [aiActionId], references: [id])
-  createdAt       DateTime        @default(now())
+  id                String          @id @default(cuid())
+  organizationId    String
+  organization      Organization    @relation(fields: [organizationId], references: [id])
+  contactId         String // Битрикс contact ID
+  dealId            String? // Битрикс deal ID
+  channel           ReminderChannel
+  source            ReminderSource // Кто инициировал: система или менеджер
+  tone              ReminderTone
+  templateKey       String? // Ключ промпта (только для source=AUTO)
+  messageText       String
+  greenApiMessageId String? // ID в Green API для дедупликации
+  status            ReminderStatus  @default(PENDING)
+  sentAt            DateTime?
+  clientReply       String?
+  replyReceivedAt   DateTime?
+  intent            ReplyIntent? // Результат парсинга ответа клиентом
+  aiActionId        String?
+  aiAction          AiAction?       @relation(fields: [aiActionId], references: [id])
+  createdAt         DateTime        @default(now())
 
   promise Promise?
 
@@ -181,31 +234,31 @@ enum ReminderChannel {
 }
 
 enum ReminderSource {
-  AUTO    // Воркер инициировал и отправил
-  MANAGER // Менеджер написал сам, система зафиксировала из Wazzup webhook
+  AUTO // Воркер инициировал и отправил
+  MANAGER // Менеджер написал сам, система зафиксировала из Green API webhook
 }
 
 enum ReminderTone {
-  SOFT   // 0-3 дня просрочки
-  FIRM   // 4-10 дней
+  SOFT // 0-3 дня просрочки
+  FIRM // 4-10 дней
   STRICT // 11-30 дней
-  FINAL  // 30+ дней
+  FINAL // 30+ дней
 }
 
 enum ReminderStatus {
-  PENDING   // В очереди на отправку
-  SENT      // Отправлено в Wazzup
-  DELIVERED // Доставлено (если Wazzup подтвердил)
-  FAILED    // Ошибка отправки
-  REPLIED   // Получен ответ от клиента
+  PENDING // В очереди на отправку
+  SENT // Отправлено через Green API
+  DELIVERED // Доставлено (если Green API подтвердил)
+  FAILED // Ошибка отправки
+  REPLIED // Получен ответ от клиента
 }
 
 enum ReplyIntent {
   PROMISE_TO_PAY // «переведу в среду», «оплачу завтра»
-  PAID           // «уже перевёл», «оплатил вчера»
-  DISPUTE        // «не согласен с суммой», «у меня другие данные»
-  REQUEST_DELAY  // «можно ещё неделю», «дайте отсрочку»
-  OTHER          // Ответ не по теме или неразборчиво
+  PAID // «уже перевёл», «оплатил вчера»
+  DISPUTE // «не согласен с суммой», «у меня другие данные»
+  REQUEST_DELAY // «можно ещё неделю», «дайте отсрочку»
+  OTHER // Ответ не по теме или неразборчиво
 }
 
 // ---------------------------------------------------------------------------
@@ -213,29 +266,32 @@ enum ReplyIntent {
 // ---------------------------------------------------------------------------
 
 model Promise {
-  id             String        @id @default(cuid())
-  organizationId String
-  organization   Organization  @relation(fields: [organizationId], references: [id])
-  contactId      String
-  reminderId     String        @unique
-  reminder       Reminder      @relation(fields: [reminderId], references: [id])
+  id               String        @id @default(cuid())
+  organizationId   String
+  organization     Organization  @relation(fields: [organizationId], references: [id])
+  contactId        String
+  reminderId       String        @unique
+  reminder         Reminder      @relation(fields: [reminderId], references: [id])
   // Сумма в минорных единицах. Может быть null если клиент не назвал сумму.
-  amount         BigInt?
-  currency       String        @default("KZT")
-  promisedDate   DateTime
-  status         PromiseStatus @default(PENDING)
-  resolvedAt     DateTime?
-  createdAt      DateTime      @default(now())
+  amount           BigInt?
+  currency         String        @default("USD")
+  // Окно обещанной оплаты. Для точной даты ("завтра", "в среду") from == to.
+  // Для диапазона ("через 1-2 дня", "4-5 числа") from < to. См. ADR 0002.
+  promisedDateFrom DateTime
+  promisedDateTo   DateTime
+  status           PromiseStatus @default(PENDING)
+  resolvedAt       DateTime?
+  createdAt        DateTime      @default(now())
 
   @@index([organizationId, contactId])
-  @@index([organizationId, promisedDate])
+  @@index([organizationId, promisedDateTo])
   @@index([organizationId, status])
 }
 
 enum PromiseStatus {
-  PENDING   // Ждём даты оплаты
+  PENDING // Ждём даты оплаты
   FULFILLED // Оплата поступила
-  BROKEN    // Дата прошла, оплаты нет
+  BROKEN // Дата прошла, оплаты нет
   CANCELLED // Отменено вручную
 }
 
@@ -245,23 +301,23 @@ enum PromiseStatus {
 // ---------------------------------------------------------------------------
 
 model AiAction {
-  id             String        @id @default(cuid())
+  id               String        @id @default(cuid())
   // nullable: системные вызовы не привязаны к организации
-  organizationId String?
-  organization   Organization? @relation(fields: [organizationId], references: [id])
-  scenario       String        // 'generate-reminder' | 'parse-reply' | 'explain-trend'
-  promptVersion  String        // 'v1', 'v2' — версия файла из packages/ai/prompts/
-  model          String        // 'claude-haiku-4-5-20251001' | 'claude-sonnet-4-6'
-  inputSummary   String        // Краткое описание входных данных (не полный промпт)
-  outputSummary  String?
-  inputTokens    Int
-  outputTokens   Int
-  latencyMs      Int
+  organizationId   String?
+  organization     Organization? @relation(fields: [organizationId], references: [id])
+  scenario         String // 'generate-reminder' | 'parse-reply' | 'explain-trend'
+  promptVersion    String // 'v1', 'v2' — версия файла из packages/ai/prompts/
+  model            String // 'claude-haiku-4-5-20251001' | 'claude-sonnet-4-6'
+  inputSummary     String // Краткое описание входных данных (не полный промпт)
+  outputSummary    String?
+  inputTokens      Int
+  outputTokens     Int
+  latencyMs        Int
   // Стоимость в микродолларах (×1_000_000 от USD) — точность без float
   costMicrodollars Int
-  success        Boolean
-  errorMessage   String?
-  createdAt      DateTime      @default(now())
+  success          Boolean
+  errorMessage     String?
+  createdAt        DateTime      @default(now())
 
   reminders Reminder[]
 
@@ -270,23 +326,25 @@ model AiAction {
 }
 
 // ---------------------------------------------------------------------------
-// WazzupChannel — WhatsApp-каналы организации в Wazzup
-// Каждый менеджер = отдельный канал
+// WhatsAppChannel — подключённые номера менеджеров через Green API
+// Каждый менеджер = отдельный экземпляр (instance) в Green API
 // ---------------------------------------------------------------------------
 
-model WazzupChannel {
+model WhatsAppChannel {
   id             String       @id @default(cuid())
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
-  channelId      String       // ID канала в Wazzup API
-  phone          String       // Номер телефона менеджера
-  managerName    String?
-  bitrixUserId   String?      // Связь с BitrixUser
+  instanceId     String // ID инстанса в Green API
+  instanceToken  String // Токен инстанса в Green API
+  phone          String // Номер телефона менеджера
+  managerId      String? // FK на Manager (заменяет managerName + bitrixUserId)
+  manager        Manager?     @relation(fields: [managerId], references: [id])
   isActive       Boolean      @default(true)
   createdAt      DateTime     @default(now())
 
-  @@unique([organizationId, channelId])
+  @@unique([organizationId, instanceId])
   @@index([organizationId])
+  @@index([managerId])
 }
 
 // ---------------------------------------------------------------------------
@@ -302,7 +360,7 @@ model ScheduleJob {
   isActive       Boolean         @default(true)
   lastRunAt      DateTime?
   nextRunAt      DateTime?
-  lastStatus     String?         // 'success' | 'failed' | сообщение об ошибке
+  lastStatus     String? // 'success' | 'failed' | сообщение об ошибке
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 
@@ -311,9 +369,9 @@ model ScheduleJob {
 
 enum ScheduleJobType {
   DAILY_OVERDUE_CHECK // Проверка просрочек и запуск напоминаний
-  RATING_RECALC       // Пересчёт рейтингов клиентов
-  MORNING_DIGEST      // Утренняя сводка собственнику в Telegram
-  PROMISE_FOLLOWUP    // Проверка выполнения обещаний оплаты
+  RATING_RECALC // Пересчёт рейтингов клиентов
+  MORNING_DIGEST // Ежедневная сводка собственнику в личку: его клиенты "Медет" (ADR 0004/0005)
+  PROMISE_FOLLOWUP // Проверка выполнения обещаний оплаты
 }
 
 // ---------------------------------------------------------------------------
@@ -324,9 +382,9 @@ model AuditLog {
   id             String       @id @default(cuid())
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
-  actor          String       // 'system' или bitrixUserId
-  action         String       // 'rating.changed' | 'limit.approved' | 'promise.broken'
-  entityType     String       // 'CustomerRating' | 'CreditLimit' | 'Promise'
+  actor          String // 'system' или bitrixUserId
+  action         String // 'rating.changed' | 'limit.approved' | 'promise.broken'
+  entityType     String // 'CustomerRating' | 'CreditLimit' | 'Promise'
   entityId       String
   before         Json?
   after          Json?
@@ -355,5 +413,5 @@ model WebhookProcessed {
 
 enum WebhookSource {
   BITRIX
-  WAZZUP
+  WHATSAPP
 }
