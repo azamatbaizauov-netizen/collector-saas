@@ -5,6 +5,7 @@ import { processRatingRecalc } from './jobs/rating-recalc.js';
 import { processOverdueCheck } from './jobs/overdue-check.js';
 import { processMorningDigest } from './jobs/morning-digest.js';
 import { processPromiseFollowup } from './jobs/promise-followup.js';
+import { processDebtSheetPoll } from './jobs/debt-sheet-poll.js';
 import { processInboundMessage } from './jobs/inbound-message.js';
 import pino from 'pino';
 
@@ -23,6 +24,8 @@ const worker = new Worker(
         return processMorningDigest(job.data as { organizationId: string });
       case 'PROMISE_FOLLOWUP':
         return processPromiseFollowup(job.data as { organizationId: string });
+      case 'DEBT_SHEET_POLL':
+        return processDebtSheetPoll(job.data as { organizationId: string });
       default:
         log.warn({ jobName: job.name }, 'Unknown job type');
     }

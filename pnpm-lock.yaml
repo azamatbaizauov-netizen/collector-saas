@@ -149,6 +149,9 @@ importers:
       '@repo/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@repo/debt-source':
+        specifier: workspace:*
+        version: link:../../packages/debt-source
       '@repo/messaging':
         specifier: workspace:*
         version: link:../../packages/messaging

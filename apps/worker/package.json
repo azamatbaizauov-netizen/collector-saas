@@ -13,6 +13,7 @@
     "@repo/ai": "workspace:*",
     "@repo/bitrix": "workspace:*",
     "@repo/db": "workspace:*",
+    "@repo/debt-source": "workspace:*",
     "@repo/messaging": "workspace:*",
     "@repo/rules": "workspace:*",
     "@repo/shared": "workspace:*",
