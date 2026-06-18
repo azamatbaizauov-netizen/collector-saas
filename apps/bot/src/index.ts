@@ -50,6 +50,13 @@ bot.command('status', async (ctx) => {
   await ctx.reply('Функция в разработке.');
 });
 
+// Утилита онбординга: показывает id текущего чата, чтобы владелец вписал его в
+// OrganizationSettings.telegramGroupChatId (туда воркер постит план дня и счётчик).
+bot.command('chatid', async (ctx) => {
+  const chat = ctx.chat;
+  await ctx.reply(`id этого чата: ${chat.id}\nтип: ${chat.type}`);
+});
+
 // Обработчик подтверждения изменения кредитного лимита
 bot.callbackQuery(/^approve_limit:(.+)$/, async (ctx) => {
   const limitId = ctx.match[1];
