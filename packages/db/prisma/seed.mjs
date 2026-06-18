@@ -45,24 +45,32 @@ const DEFAULT_SETTINGS = {
 // был идемпотентным (Manager нельзя upsert'ить по telegramUserId — он null
 // до первого /start). normalizedAlias = lower+trim, как делает нормализатор.
 // Приставка "<имя> медет" регистрируется как алиас того же менеджера.
+//
+// telegramUsername — ОЖИДАЕМЫЙ Telegram-ник менеджера (без @, lowercase). По нему
+// /start привязывает идентичность (ADR 0004): Telegram подтверждает ник, подделать
+// нельзя. ЗАПОЛНИТЬ реальными хендлами перед онбордингом — пока null, /start
+// вернёт «аккаунт не найден».
 const MANAGERS = [
-  { key: 'adilbek', fullName: 'Адилбек', aliases: ['адилбек', 'адилбек медет'] },
-  { key: 'amir', fullName: 'Амир', aliases: ['амир', 'амир медет'] },
-  { key: 'halima', fullName: 'Халима', aliases: ['халима', 'халима медет'] },
-  { key: 'savutzhan', fullName: 'Савутжан', aliases: ['савутжан', 'савутжан медет'] },
-  { key: 'bibigul', fullName: 'Бибигуль', aliases: ['бибигуль', 'бибигуль медет'] },
+  { key: 'adilbek', fullName: 'Адилбек', telegramUsername: null, aliases: ['адилбек', 'адилбек медет'] },
+  { key: 'amir', fullName: 'Амир', telegramUsername: null, aliases: ['амир', 'амир медет'] },
+  { key: 'halima', fullName: 'Халима', telegramUsername: null, aliases: ['халима', 'халима медет'] },
+  { key: 'savutzhan', fullName: 'Савутжан', telegramUsername: null, aliases: ['савутжан', 'савутжан медет'] },
+  { key: 'bibigul', fullName: 'Бибигуль', telegramUsername: null, aliases: ['бибигуль', 'бибигуль медет'] },
   // Владелец: его клиенты (одиночное "Медет" в колонке МОП) не идут в счётчик
   // задач менеджерам, по ним MORNING_DIGEST в личку (ADR 0004/0005).
-  { key: 'owner', fullName: 'Медет', isOwner: true, aliases: ['медет'] },
+  { key: 'owner', fullName: 'Медет', isOwner: true, telegramUsername: null, aliases: ['медет'] },
 ];
 
 async function seedManagers(orgId) {
   for (const m of MANAGERS) {
     const id = `${orgId}-mgr-${m.key}`;
+    const username = m.telegramUsername ? m.telegramUsername.toLowerCase() : null;
     await prisma.manager.upsert({
       where: { id },
-      update: { fullName: m.fullName, isOwner: m.isOwner ?? false },
-      create: { id, organizationId: orgId, fullName: m.fullName, isOwner: m.isOwner ?? false },
+      // telegramUsername пишем только если задан, чтобы не затирать вручную
+      // выставленный ник; telegramUserId не трогаем — его проставляет /start.
+      update: { fullName: m.fullName, isOwner: m.isOwner ?? false, ...(username ? { telegramUsername: username } : {}) },
+      create: { id, organizationId: orgId, fullName: m.fullName, isOwner: m.isOwner ?? false, telegramUsername: username },
     });
     for (const normalizedAlias of m.aliases) {
       await prisma.managerSheetAlias.upsert({
