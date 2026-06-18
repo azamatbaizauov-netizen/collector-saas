@@ -88,8 +88,8 @@ describe('parseSheetDate', () => {
 describe('normalizeDebtRow', () => {
   it('валидная строка нормализуется в USD-запись', () => {
     const r = normalizeDebtRow(baseRow(), aliases);
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
+    expect(r.kind).toBe('imported');
+    if (r.kind !== 'imported') return;
     expect(r.managerId).toBe('m-adilbek');
     expect(r.isOwnerRow).toBe(false);
     expect(r.phone).toBe('+77000248707');
@@ -101,46 +101,60 @@ describe('normalizeDebtRow', () => {
 
   it('строка владельца помечается isOwnerRow', () => {
     const r = normalizeDebtRow(baseRow({ mop: 'Медет' }), aliases);
-    expect(r.ok && r.isOwnerRow).toBe(true);
+    expect(r.kind === 'imported' && r.isOwnerRow).toBe(true);
   });
 
   it('приставка "адилбек медет" → тот же менеджер', () => {
     const r = normalizeDebtRow(baseRow({ mop: 'Адилбек Медет' }), aliases);
-    expect(r.ok && r.managerId).toBe('m-adilbek');
-    expect(r.ok && r.isOwnerRow).toBe(false);
+    expect(r.kind === 'imported' && r.managerId).toBe('m-adilbek');
+    expect(r.kind === 'imported' && r.isOwnerRow).toBe(false);
   });
 
   it('незнакомый МОП → unmatched_manager c алиасом', () => {
     const r = normalizeDebtRow(baseRow({ mop: 'Неизвестный' }), aliases);
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
+    expect(r.kind).toBe('rejected');
+    if (r.kind !== 'rejected') return;
     expect(r.reason).toBe('unmatched_manager');
     expect(r.alias).toBe('неизвестный');
   });
 
-  it('съехавшая строка (число в МОП) → unmatched_manager, alias null', () => {
+  it('съехавшая строка с данными, но число в МОП → unmatched_manager, alias null', () => {
     const r = normalizeDebtRow(baseRow({ mop: '603008.41' }), aliases);
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
+    expect(r.kind).toBe('rejected');
+    if (r.kind !== 'rejected') return;
     expect(r.reason).toBe('unmatched_manager');
     expect(r.alias).toBeNull();
   });
 
   it('битый телефон → broken_phone (менеджер уже определён)', () => {
     const r = normalizeDebtRow(baseRow({ phone: '7700024870' }), aliases);
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
+    expect(r.kind).toBe('rejected');
+    if (r.kind !== 'rejected') return;
     expect(r.reason).toBe('broken_phone');
     expect(r.alias).toBe('адилбек');
   });
 
   it('тенге-выброс по долгу → currencySuspect', () => {
     const r = normalizeDebtRow(baseRow({ debt: 23000000 }), aliases);
-    expect(r.ok && r.currencySuspect).toBe(true);
+    expect(r.kind === 'imported' && r.currencySuspect).toBe(true);
   });
 
   it('тенге-выброс по лимиту → currencySuspect', () => {
     const r = normalizeDebtRow(baseRow({ debt: 5000, limit: 1560500 }), aliases);
-    expect(r.ok && r.currencySuspect).toBe(true);
+    expect(r.kind === 'imported' && r.currencySuspect).toBe(true);
+  });
+
+  it('subtotal/footer строка (нет клиента и телефона) → skipped, без алерта', () => {
+    // Реальный пример: счётчик в МОП, сумма в долге, клиента/телефона нет.
+    const r = normalizeDebtRow(
+      baseRow({ mop: 59, client: null, phone: null, debt: 171613.95 }),
+      aliases,
+    );
+    expect(r.kind).toBe('skipped');
+  });
+
+  it('пустая строка → skipped', () => {
+    const r = normalizeDebtRow(baseRow({ mop: null, client: null, phone: null, debt: null }), aliases);
+    expect(r.kind).toBe('skipped');
   });
 });

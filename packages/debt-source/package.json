@@ -1,0 +1,23 @@
+{
+  "name": "@repo/debt-source",
+  "version": "0.0.1",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@repo/rules": "workspace:*",
+    "@repo/shared": "workspace:*",
+    "exceljs": "^4.4.0",
+    "googleapis": "^173.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.0.0"
+  }
+}

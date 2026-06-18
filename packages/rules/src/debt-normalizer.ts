@@ -27,7 +27,7 @@ export interface RawDebtRow {
 }
 
 export interface NormalizedDebtRow {
-  ok: true;
+  kind: 'imported';
   managerId: string;
   isOwnerRow: boolean; // строка владельца: не идёт в счётчик задач менеджерам
   client: string;
@@ -47,13 +47,21 @@ export interface NormalizedDebtRow {
 export type RejectReason = 'unmatched_manager' | 'broken_phone';
 
 export interface RejectedDebtRow {
-  ok: false;
+  kind: 'rejected';
   reason: RejectReason;
   alias: string | null;
   raw: RawDebtRow;
 }
 
-export type NormalizeResult = NormalizedDebtRow | RejectedDebtRow;
+// Строка без должника (subtotal/footer/пустая): нет ни клиента, ни телефона.
+// Пропускаем молча — не импортируем и НЕ алертим владельцу (это не «потерянный
+// должник», а служебная строка таблицы).
+export interface SkippedDebtRow {
+  kind: 'skipped';
+  raw: RawDebtRow;
+}
+
+export type NormalizeResult = NormalizedDebtRow | RejectedDebtRow | SkippedDebtRow;
 
 // Соответствие нормализованного алиаса менеджеру (из ManagerSheetAlias, ADR 0005).
 export interface AliasResolution {
@@ -128,21 +136,31 @@ function textOrNull(raw: unknown): string | null {
   return s === '' ? null : s;
 }
 
+function isBlank(raw: unknown): boolean {
+  return raw == null || String(raw).trim() === '';
+}
+
 export function normalizeDebtRow(row: RawDebtRow, aliases: AliasMap): NormalizeResult {
+  // 0. Служебная строка (subtotal/footer/пустая): ни клиента, ни телефона.
+  // Часто содержит число в МОП (счётчик) и сумму в долге. Пропускаем молча.
+  if (isBlank(row.client) && isBlank(row.phone)) {
+    return { kind: 'skipped', raw: row };
+  }
+
   // 1. МОП → менеджер. Съехавшая/незнакомая строка → unmatched_manager.
   if (isShiftedMopCell(row.mop)) {
-    return { ok: false, reason: 'unmatched_manager', alias: null, raw: row };
+    return { kind: 'rejected', reason: 'unmatched_manager', alias: null, raw: row };
   }
   const alias = normalizeAlias(row.mop);
   const resolution = aliases.get(alias);
   if (!resolution) {
-    return { ok: false, reason: 'unmatched_manager', alias, raw: row };
+    return { kind: 'rejected', reason: 'unmatched_manager', alias, raw: row };
   }
 
   // 2. Телефон → E.164. Битый → нераспределённые (не теряем должника).
   const phone = normalizePhone(row.phone);
   if (phone === null) {
-    return { ok: false, reason: 'broken_phone', alias, raw: row };
+    return { kind: 'rejected', reason: 'broken_phone', alias, raw: row };
   }
 
   // 3. Суммы. Подозрение на тенге считаем по мажорным значениям до конвертации.
@@ -153,7 +171,7 @@ export function normalizeDebtRow(row: RawDebtRow, aliases: AliasMap): NormalizeR
     (limitMajor !== null && limitMajor > CURRENCY_SUSPECT_LIMIT_THRESHOLD);
 
   return {
-    ok: true,
+    kind: 'imported',
     managerId: resolution.managerId,
     isOwnerRow: resolution.isOwner,
     client: String(row.client ?? '').trim(),

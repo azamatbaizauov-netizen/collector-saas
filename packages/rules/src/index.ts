@@ -15,6 +15,7 @@ export type {
   RawDebtRow,
   NormalizedDebtRow,
   RejectedDebtRow,
+  SkippedDebtRow,
   NormalizeResult,
   RejectReason,
   AliasMap,
