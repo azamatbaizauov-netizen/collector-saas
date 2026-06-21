@@ -1,7 +1,7 @@
 import { prisma } from '@repo/db';
 import { loadDailyPlan } from '../debt-data.js';
 import { getTelegramApi } from '../telegram.js';
-import { formatOwnerDigest } from '../format-plan.js';
+import { formatOwnerDigest, type EscalationEntry } from '../format-plan.js';
 import pino from 'pino';
 
 const log = pino({ level: process.env['LOG_LEVEL'] ?? 'info' });
@@ -31,7 +31,22 @@ export async function processMorningDigest(data: { organizationId: string }): Pr
     return;
   }
 
-  for (const message of formatOwnerDigest(plan.ownerTasks)) {
+  // Эскалация (ADR 0006): должники менеджеров > порога дней → владельцу с именем
+  // ответственного МОПа. Резолвим managerId → fullName, как в DAILY_PLAN.
+  let escalations: EscalationEntry[] = [];
+  if (plan.escalationTasks.length > 0) {
+    const managers = await prisma.manager.findMany({
+      where: { organizationId },
+      select: { id: true, fullName: true },
+    });
+    const nameById = new Map(managers.map((m) => [m.id, m.fullName]));
+    escalations = plan.escalationTasks.map((t) => ({
+      ...t,
+      managerName: nameById.get(t.managerId) ?? t.managerId,
+    }));
+  }
+
+  for (const message of formatOwnerDigest(plan.ownerTasks, escalations)) {
     await api.sendMessage(settings.ownerTelegramUserId, message);
   }
 
@@ -40,7 +55,7 @@ export async function processMorningDigest(data: { organizationId: string }): Pr
   }
 
   log.info(
-    { organizationId, ownerTasks: plan.ownerTasks.length },
+    { organizationId, ownerTasks: plan.ownerTasks.length, escalations: escalations.length },
     'MORNING_DIGEST: сводка отправлена собственнику',
   );
 }

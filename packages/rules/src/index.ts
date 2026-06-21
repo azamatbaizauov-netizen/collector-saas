@@ -21,5 +21,5 @@ export type {
   AliasMap,
   AliasResolution,
 } from './debt-normalizer.js';
-export { buildDailyPlan } from './daily-plan.js';
-export type { DailyPlan, ManagerPlan, DailyTask } from './daily-plan.js';
+export { buildDailyPlan, daysOverduePromised, ESCALATION_OVERDUE_DAYS } from './daily-plan.js';
+export type { DailyPlan, ManagerPlan, DailyTask, EscalationTask } from './daily-plan.js';

@@ -1,0 +1,10 @@
+# Caddy: HTTPS-вход для пилота. Автоматический сертификат Let's Encrypt по домену.
+# Домен и e-mail берутся из окружения (.env → docker-compose.prod.yml).
+{
+	email {$ACME_EMAIL}
+}
+
+{$API_DOMAIN} {
+	# Вебхуки Битрикса и Green API + внутренний API виджетов.
+	reverse_proxy api:3001
+}

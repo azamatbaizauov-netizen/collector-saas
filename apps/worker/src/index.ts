@@ -21,7 +21,9 @@ const worker = new Worker(
       case 'RATING_RECALC':
         return processRatingRecalc(job.data as { organizationId: string });
       case 'DAILY_OVERDUE_CHECK':
-        return processOverdueCheck(job.data as { organizationId: string });
+        return processOverdueCheck({ ...(job.data as { organizationId: string }), stage: 'reminder' });
+      case 'FINAL_COVERAGE':
+        return processOverdueCheck({ ...(job.data as { organizationId: string }), stage: 'final' });
       case 'MORNING_DIGEST':
         return processMorningDigest(job.data as { organizationId: string });
       case 'PROMISE_FOLLOWUP':

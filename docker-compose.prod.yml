@@ -1,0 +1,108 @@
+# Прод-стек пилота на одном VPS (CLAUDE.md → Хостинг).
+# Внутри сети compose сервисы зовут друг друга по имени: postgres, redis, api.
+# Секреты и токены — в .env (env_file). DATABASE_URL/REDIS_URL/PORT
+# переопределяются здесь под внутренние адреса (environment > env_file).
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: saas_opt
+      POSTGRES_USER: saas_opt
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U saas_opt -d saas_opt"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: saas-opt
+    restart: unless-stopped
+    command: ["node", "apps/api/dist/index.js"]
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      TZ: Asia/Almaty
+      PORT: "3001"
+      HOST: "0.0.0.0"
+      DATABASE_URL: "postgresql://saas_opt:${POSTGRES_PASSWORD}@postgres:5432/saas_opt?schema=public"
+      REDIS_URL: "redis://redis:6379"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  worker:
+    image: saas-opt
+    restart: unless-stopped
+    command: ["node", "apps/worker/dist/index.js"]
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      # Воркер гоняет cron-расписания (план 09:30, счётчик 14:00) и считает
+      # "сегодня" для касаний — оба по локальному времени процесса. Пилот в Алматы.
+      TZ: Asia/Almaty
+      DATABASE_URL: "postgresql://saas_opt:${POSTGRES_PASSWORD}@postgres:5432/saas_opt?schema=public"
+      REDIS_URL: "redis://redis:6379"
+      # Ключ сервис-аккаунта Google внутри контейнера (см. volumes ниже). Файл
+      # лежит на VPS рядом с compose в ./secrets/google.json и монтируется ro.
+      GOOGLE_APPLICATION_CREDENTIALS: "/secrets/google.json"
+    volumes:
+      - ./secrets/google.json:/secrets/google.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:

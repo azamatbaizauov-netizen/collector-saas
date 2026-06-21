@@ -38,6 +38,7 @@ model Organization {
   aiActions           AiAction[]
   webhookProcessed    WebhookProcessed[]
   debtSheetState      DebtSheetState?
+  whatsappTouches     WhatsAppTouch[]
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +350,34 @@ model WhatsAppChannel {
 }
 
 // ---------------------------------------------------------------------------
+// WhatsAppTouch — факт касания менеджера в WhatsApp (из Green API webhook).
+// Лёгкая запись для счётчика покрытия на cutoff: НЕ дублирует Битрикс, матчинг
+// с дебиторкой по номеру телефона (phone E.164), а не по contactId. См. ADR 0006.
+// ---------------------------------------------------------------------------
+
+model WhatsAppTouch {
+  id                String         @id @default(cuid())
+  organizationId    String
+  organization      Organization   @relation(fields: [organizationId], references: [id])
+  managerId         String? // из WhatsAppChannel по instanceId; null — канал без менеджера
+  phone             String // E.164 контрагента (+7…/+996…), ключ матчинга с планом дня
+  direction         TouchDirection
+  greenApiMessageId String // дедуп касаний
+  touchedAt         DateTime // время сообщения из вебхука
+
+  createdAt DateTime @default(now())
+
+  @@unique([organizationId, greenApiMessageId])
+  @@index([organizationId, touchedAt])
+  @@index([organizationId, managerId, touchedAt])
+}
+
+enum TouchDirection {
+  INCOMING // сообщение от клиента
+  OUTGOING // менеджер написал сам (= «связался», идёт в счётчик покрытия)
+}
+
+// ---------------------------------------------------------------------------
 // ScheduleJob — расписания воркеров на организацию
 // ---------------------------------------------------------------------------
 
@@ -369,12 +398,13 @@ model ScheduleJob {
 }
 
 enum ScheduleJobType {
-  DAILY_OVERDUE_CHECK // Проверка просрочек и запуск напоминаний
+  DAILY_OVERDUE_CHECK // 14:00 напоминание-счётчик: кто ещё не написал должникам (ADR 0006)
   RATING_RECALC // Пересчёт рейтингов клиентов
   MORNING_DIGEST // Ежедневная сводка собственнику в личку: его клиенты "Медет" (ADR 0004/0005)
   PROMISE_FOLLOWUP // Проверка выполнения обещаний оплаты
   DEBT_SHEET_POLL // Опрос Google Sheet дебиторки: при смене version — импорт (ADR 0003)
-  DAILY_PLAN // План дня менеджерам в общий Telegram-чат по @username (ADR 0004, механика 1)
+  DAILY_PLAN // 09:30 план дня менеджерам в общий Telegram-чат по @username (ADR 0004, механика 1)
+  FINAL_COVERAGE // 17:00 финальный счётчик: кто так и не вышел на связь сегодня (ADR 0006)
 }
 
 // ---------------------------------------------------------------------------

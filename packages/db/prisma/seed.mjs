@@ -29,10 +29,13 @@ const DEFAULT_SETTINGS = {
     final: [31, null],
   },
   scheduleConfig: {
+    // Времена по локальной TZ воркера (в проде TZ=Asia/Almaty, docker-compose.prod.yml).
     ratingRecalc: '0 2 * * *',
-    dailyCallList: '0 7 * * *',
+    dailyCallList: '30 9 * * *', // план дня менеджерам в общий чат в 09:30 (ADR 0004)
     ownerSummary: '0 8 * * *',
-    debtSheetPoll: '*/15 * * * *', // опрос Google Sheet дебиторки каждые 15 мин (ADR 0003)
+    cutoffCoverage: '0 14 * * *', // в 14:00 напоминание-счётчик: кто ещё не написал (ADR 0006)
+    finalCoverage: '0 17 * * *', // в 17:00 финал: кто так и не вышел на связь (ADR 0006)
+    debtSheetPoll: '0 * * * *', // опрос Google Sheet дебиторки раз в час (ADR 0003; отчёты всё равно читают лист живьём)
   },
   templateConfig: {
     generateReminder: 'reminders/v1',
@@ -51,14 +54,18 @@ const DEFAULT_SETTINGS = {
 // нельзя. ЗАПОЛНИТЬ реальными хендлами перед онбордингом — пока null, /start
 // вернёт «аккаунт не найден».
 const MANAGERS = [
-  { key: 'adilbek', fullName: 'Адилбек', telegramUsername: null, aliases: ['адилбек', 'адилбек медет'] },
-  { key: 'amir', fullName: 'Амир', telegramUsername: null, aliases: ['амир', 'амир медет'] },
-  { key: 'halima', fullName: 'Халима', telegramUsername: null, aliases: ['халима', 'халима медет'] },
+  { key: 'adilbek', fullName: 'Адилбек', telegramUsername: 'Adilbek_LuxRepublic', aliases: ['адилбек', 'адилбек медет'] },
+  { key: 'amir', fullName: 'Амир', telegramUsername: 'Madina_LuxRepublic', aliases: ['амир', 'амир медет'] },
+  // Айнур: в дебиторке 74 должника под МОП «айнур», но в системе её не было —
+  // строки выпадали из планов. Telegram-ник пока null (уточняем личность),
+  // поэтому в группе её план адресуется по имени, а не @-упоминанием.
+  { key: 'ainur', fullName: 'Айнур', telegramUsername: null, aliases: ['айнур', 'айнур медет'] },
+  { key: 'halima', fullName: 'Халима', telegramUsername: 'khalima_luxRepublic', aliases: ['халима', 'халима медет'] },
   { key: 'savutzhan', fullName: 'Савутжан', telegramUsername: null, aliases: ['савутжан', 'савутжан медет'] },
   { key: 'bibigul', fullName: 'Бибигуль', telegramUsername: null, aliases: ['бибигуль', 'бибигуль медет'] },
   // Владелец: его клиенты (одиночное "Медет" в колонке МОП) не идут в счётчик
   // задач менеджерам, по ним MORNING_DIGEST в личку (ADR 0004/0005).
-  { key: 'owner', fullName: 'Медет', isOwner: true, telegramUsername: null, aliases: ['медет'] },
+  { key: 'owner', fullName: 'Медет', isOwner: true, telegramUsername: 'abuimran1990', aliases: ['медет'] },
 ];
 
 async function seedManagers(orgId) {
@@ -86,13 +93,16 @@ async function seedManagers(orgId) {
 // Расписания воркеров (ScheduleJob) — источник истины по cron на организацию.
 // Регистратор воркера превращает активные строки в BullMQ Job Schedulers.
 // RATING_RECALC/PROMISE_FOLLOWUP пока заглушки — не бутстрапим, чтобы не
-// гонять пустые задачи. DAILY_PLAN/MORNING_DIGEST шлют в Telegram и деградируют
-// с warn, пока не настроен TELEGRAM_BOT_TOKEN/chat id (ADR 0004).
+// гонять пустые задачи. DAILY_PLAN/MORNING_DIGEST/DAILY_OVERDUE_CHECK шлют в
+// Telegram и деградируют с warn, пока не настроен TELEGRAM_BOT_TOKEN/chat id
+// (ADR 0004; счётчик покрытия — ADR 0006).
 async function seedScheduleJobs(orgId, scheduleConfig) {
   const jobs = [
     { jobType: 'DEBT_SHEET_POLL', cron: scheduleConfig.debtSheetPoll },
     { jobType: 'DAILY_PLAN', cron: scheduleConfig.dailyCallList },
     { jobType: 'MORNING_DIGEST', cron: scheduleConfig.ownerSummary },
+    { jobType: 'DAILY_OVERDUE_CHECK', cron: scheduleConfig.cutoffCoverage },
+    { jobType: 'FINAL_COVERAGE', cron: scheduleConfig.finalCoverage },
   ];
   for (const j of jobs) {
     await prisma.scheduleJob.upsert({
