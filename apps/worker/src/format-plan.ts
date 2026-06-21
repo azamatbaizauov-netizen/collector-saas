@@ -8,10 +8,16 @@ import { TELEGRAM_MAX_LEN } from './telegram.js';
 
 function formatTask(t: DailyTask): string {
   const usd = fromMinorUnits(t.debt.amount);
-  // Просрочка по обещанной дате (G): 0 — срок сегодня, >0 — просрочка N дн.
-  // null (срок не указан, строки владельца) — без суффикса срока.
+  // Просрочка по обещанной дате (G): 0 — срок сегодня, >0 — просрочка N дн, <0 —
+  // срок ещё впереди (бывает только у владельца — его строки без фильтра по G).
+  // null (срок не указан) — без суффикса срока.
   if (t.daysOverdue === null) return `• ${t.client} — $${usd}`;
-  const term = t.daysOverdue === 0 ? 'срок сегодня' : `просрочка ${t.daysOverdue} дн`;
+  const term =
+    t.daysOverdue === 0
+      ? 'срок сегодня'
+      : t.daysOverdue > 0
+        ? `просрочка ${t.daysOverdue} дн`
+        : `срок через ${-t.daysOverdue} дн`;
   return `• ${t.client} — $${usd}, ${term}`;
 }
 
