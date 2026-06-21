@@ -15,12 +15,17 @@ WORKDIR /app
 # Весь репозиторий (node_modules/dist/.env исключены через .dockerignore).
 COPY . .
 
+# Прод-VPS общий, ~2 ГБ свободной памяти. Параллельная сборка пакетов через
+# tsc упирается в OOM, поэтому ограничиваем кучу Node и собираем пакеты
+# по одному (--workspace-concurrency=1).
+ENV NODE_OPTIONS=--max-old-space-size=2048
+
 # Установка → генерация Prisma Client → сборка ТОЛЬКО api/worker и их пакетов
 # (синтаксис "...": пакет + его workspace-зависимости). Виджет (Next) и бот
 # в этот образ не входят — у них своё развёртывание.
 RUN pnpm install --frozen-lockfile \
   && pnpm --filter @repo/db generate \
-  && pnpm --filter "@repo/api..." --filter "@repo/worker..." build
+  && pnpm --workspace-concurrency=1 --filter "@repo/api..." --filter "@repo/worker..." build
 
 ENV NODE_ENV=production
 
