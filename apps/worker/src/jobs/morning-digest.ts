@@ -46,7 +46,7 @@ export async function processMorningDigest(data: { organizationId: string }): Pr
     }));
   }
 
-  for (const message of formatOwnerDigest(plan.ownerTasks, escalations)) {
+  for (const message of formatOwnerDigest(plan.ownerTasks, escalations, plan.currencyReview)) {
     await api.sendMessage(settings.ownerTelegramUserId, message);
   }
 
@@ -55,7 +55,12 @@ export async function processMorningDigest(data: { organizationId: string }): Pr
   }
 
   log.info(
-    { organizationId, ownerTasks: plan.ownerTasks.length, escalations: escalations.length },
+    {
+      organizationId,
+      ownerTasks: plan.ownerTasks.length,
+      escalations: escalations.length,
+      currencyReview: plan.currencyReview.length,
+    },
     'MORNING_DIGEST: сводка отправлена собственнику',
   );
 }

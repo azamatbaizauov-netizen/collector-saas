@@ -54,6 +54,11 @@ export interface DailyPlan {
   managers: ManagerPlan[]; // менеджеры (не владелец), у каждого свой список
   ownerTasks: DailyTask[]; // клиенты владельца → MORNING_DIGEST собственнику
   escalationTasks: EscalationTask[]; // >порога дней у менеджеров → MORNING_DIGEST, блок эскалации
+  // Подозрение на тенге-выброс (ADR 0003): сумма нереальна для USD. Не показываем
+  // как $-долг ни менеджеру, ни владельцу — выносим в блок «проверить валюту» в
+  // MORNING_DIGEST. Это вопрос к данным (чинит владелец/админ в листе), а не задача
+  // менеджеру: из планов и эскалации такие строки изымаются.
+  currencyReview: DailyTask[];
 }
 
 function toTask(row: NormalizedDebtRow, today: Date): DailyTask {
@@ -84,11 +89,18 @@ export function buildDailyPlan(
 ): DailyPlan {
   const ownerTasks: DailyTask[] = [];
   const escalationTasks: EscalationTask[] = [];
+  const currencyReview: DailyTask[] = [];
   const byManager = new Map<string, DailyTask[]>();
 
   for (const row of rows) {
     if (row.debt.amount <= 0n) continue; // долг закрыт/нулевой — не в план
     const task = toTask(row, today);
+    // Подозрение на тенге: изымаем из всех списков (и менеджера, и владельца) —
+    // это data-quality, а не «напомнить сегодня». Уходит в блок «проверить валюту».
+    if (row.currencySuspect) {
+      currencyReview.push(task);
+      continue;
+    }
     // Владельца порог/срок не касается — все его клиенты с долгом > 0 в сводку.
     if (row.isOwnerRow) {
       ownerTasks.push(task);
@@ -109,9 +121,13 @@ export function buildDailyPlan(
 
   ownerTasks.sort(byPriority);
   escalationTasks.sort(byPriority);
+  // Блок «проверить валюту»: срок тут не показатель, сортируем по сумме (больше — выше).
+  currencyReview.sort((a, b) =>
+    a.debt.amount === b.debt.amount ? 0 : a.debt.amount > b.debt.amount ? -1 : 1,
+  );
   const managers: ManagerPlan[] = [...byManager.entries()]
     .map(([managerId, tasks]) => ({ managerId, tasks: tasks.sort(byPriority) }))
     .sort((a, b) => a.managerId.localeCompare(b.managerId));
 
-  return { managers, ownerTasks, escalationTasks };
+  return { managers, ownerTasks, escalationTasks, currencyReview };
 }

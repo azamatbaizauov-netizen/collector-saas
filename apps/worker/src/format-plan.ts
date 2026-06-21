@@ -56,15 +56,26 @@ function formatEscalation(e: EscalationEntry): string {
 // Механика 2: дайджест собственнику в личку по его клиентам. Плюс отдельный
 // блок эскалации — должники менеджеров с просрочкой по сроку G > порога (ADR
 // 0007, >30 дней): из плана менеджеров выпали, владелец видит их с ответственным МОПом.
+// Должник с подозрением на тенге-выброс (ADR 0003): сумму НЕ показываем как $-долг
+// (она нереальна для USD), печатаем без символа валюты — это сигнал «проверить лист».
+function formatCurrencyReview(t: DailyTask): string {
+  return `• ${t.client} — ${fromMinorUnits(t.debt.amount)}`;
+}
+
 export function formatOwnerDigest(
   tasks: DailyTask[],
   escalations: EscalationEntry[] = [],
+  currencyReview: DailyTask[] = [],
 ): string[] {
   const header = `Ваши должники на сегодня (${tasks.length}):`;
   const messages = chunk(header, tasks.map(formatTask));
   if (escalations.length > 0) {
     const escHeader = `⚠️ Эскалация (просрочка >30 дней) — ${escalations.length}:`;
     messages.push(...chunk(escHeader, escalations.map(formatEscalation)));
+  }
+  if (currencyReview.length > 0) {
+    const revHeader = `⚠️ Проверить валюту (${currencyReview.length}):`;
+    messages.push(...chunk(revHeader, currencyReview.map(formatCurrencyReview)));
   }
   return messages;
 }

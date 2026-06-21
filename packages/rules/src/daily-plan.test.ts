@@ -165,5 +165,23 @@ describe('buildDailyPlan', () => {
     expect(plan.managers).toEqual([]);
     expect(plan.ownerTasks).toEqual([]);
     expect(plan.escalationTasks).toEqual([]);
+    expect(plan.currencyReview).toEqual([]);
+  });
+
+  it('подозрение на тенге изымается из всех списков в блок «проверить валюту»', () => {
+    const plan = buildDailyPlan(
+      [
+        // suspect: и менеджера, и владельца — оба уходят в currencyReview, не в свои списки
+        row({ managerId: 'm-adilbek', client: 'тенге менеджера', currencySuspect: true, debt: { amount: 2300000000n, currency: 'USD' } }),
+        row({ managerId: 'm-owner', isOwnerRow: true, client: 'тенге владельца', currencySuspect: true, debt: { amount: 156050000n, currency: 'USD' } }),
+        // обычный должник менеджера — остаётся в плане
+        row({ managerId: 'm-adilbek', client: 'нормальный', currencySuspect: false }),
+      ],
+      TODAY,
+    );
+    expect(plan.managers[0]?.tasks.map((t) => t.client)).toEqual(['нормальный']);
+    expect(plan.ownerTasks).toEqual([]);
+    // сортировка блока по сумме: больше долг — выше
+    expect(plan.currencyReview.map((t) => t.client)).toEqual(['тенге менеджера', 'тенге владельца']);
   });
 });
