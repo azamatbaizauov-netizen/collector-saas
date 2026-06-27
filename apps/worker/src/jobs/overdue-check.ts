@@ -67,12 +67,9 @@ export async function processOverdueCheck(data: {
 
   const entries: CoverageEntry[] = plan.managers.map((mp) => {
     const contacted = contactedByManager.get(mp.managerId) ?? new Set<string>();
-    const pending = mp.tasks.filter((t) => !contacted.has(t.phone)).map((t) => t.client);
     return {
       mention: mentionById.get(mp.managerId) ?? mp.managerId,
-      contacted: mp.tasks.length - pending.length,
-      total: mp.tasks.length,
-      pending,
+      debtors: mp.tasks.map((t) => ({ client: t.client, contacted: contacted.has(t.phone) })),
     };
   });
 

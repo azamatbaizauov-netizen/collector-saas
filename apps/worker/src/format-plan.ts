@@ -93,41 +93,51 @@ export function formatOwnerDigest(
 }
 
 // Публичный счётчик покрытия на cutoff (ADR 0004 схема 1+2+4, ADR 0006).
-// На каждого менеджера: сколько из плана связались по WhatsApp, кто остался.
+// На каждого менеджера — поимённый список должников плана со статусом контакта:
+// 🟢 менеджер сегодня написал, 🔴 ещё нет.
+export interface CoverageDebtor {
+  client: string;
+  contacted: boolean;
+}
+
 export interface CoverageEntry {
   mention: string; // @username или имя
-  contacted: number;
-  total: number;
-  pending: string[]; // имена должников, с кем менеджер сегодня не связался
+  debtors: CoverageDebtor[];
 }
 
 export type CoverageStage = 'reminder' | 'final';
+
+// Блок одного менеджера: подзаголовок «написал X/Y» + нумерованный список
+// должников с меткой 🟢 (написал сегодня) / 🔴 (ещё нет). Нумерация сквозная по
+// списку менеджера, как в плане дня.
+function coverageBlock(e: CoverageEntry): string[] {
+  const contacted = e.debtors.filter((d) => d.contacted).length;
+  const lines = [`${e.mention} — написал ${contacted}/${e.debtors.length}:`];
+  e.debtors.forEach((d, i) => {
+    lines.push(`${i + 1}. ${d.contacted ? '🟢' : '🔴'} ${d.client}`);
+  });
+  return lines;
+}
 
 export function formatCoverage(
   entries: CoverageEntry[],
   stage: CoverageStage = 'reminder',
 ): string[] {
-  // 17:00 — финал: только те, с кем так и не связались. Имена в лоб («такие-то
-  // сегодня не вышли на связь»). Все охвачены — короткое позитивное сообщение.
-  if (stage === 'final') {
-    const pendingEntries = entries.filter((e) => e.pending.length > 0);
-    if (pendingEntries.length === 0) {
-      return ['✅ Итог дня: все должники из плана сегодня охвачены.'];
-    }
-    const lines = pendingEntries.map(
-      (e) => `🔴 ${e.mention} — не вышли на связь: ${e.pending.join(', ')}`,
-    );
-    return chunk('Итог дня — с этими должниками сегодня не связались:', lines);
+  // Все охвачены — короткое позитивное сообщение (одинаково для обеих стадий).
+  const allContacted = entries.every((e) => e.debtors.every((d) => d.contacted));
+  if (allContacted) {
+    return ['✅ Все должники из плана сегодня охвачены.'];
   }
 
-  // 14:00 — напоминание: по каждому менеджеру сколько написал и кто остался.
+  // 🟢 написал / 🔴 не написал — поимённо по каждому должнику в обеих сводках
+  // (14:00 — напоминание, 17:00 — итог дня).
+  const header =
+    stage === 'final'
+      ? 'Итог дня — 🟢 написал, 🔴 не вышли на связь:'
+      : '⏰ Напоминание — 🟢 написал, 🔴 ещё не написал:';
   const lines: string[] = [];
   for (const e of entries) {
-    const mark = e.pending.length === 0 ? '✅' : '⚠️';
-    lines.push(`${mark} ${e.mention} — написал ${e.contacted}/${e.total}`);
-    if (e.pending.length > 0) {
-      lines.push(`   ещё не написал: ${e.pending.join(', ')}`);
-    }
+    lines.push(...coverageBlock(e));
   }
-  return chunk('⏰ Напоминание: кто ещё не написал должникам сегодня:', lines);
+  return chunk(header, lines);
 }
