@@ -13,9 +13,9 @@ export interface ParsedReply {
 
 const outputSchema = z.object({
   intent: z.enum(['PROMISE_TO_PAY', 'PAID', 'DISPUTE', 'REQUEST_DELAY', 'OTHER']),
-  promisedDate: z.string().optional(),
-  promisedAmount: z.number().optional(),
-  currency: z.string().optional(),
+  promisedDate: z.string().nullish(),
+  promisedAmount: z.number().nullish(),
+  currency: z.string().nullish(),
 });
 
 export async function parseReply(
@@ -63,6 +63,6 @@ export async function parseReply(
     promisedAmount: parsed.promisedAmount
       ? BigInt(Math.round(parsed.promisedAmount * 100))
       : undefined,
-    currency: parsed.currency,
+    currency: parsed.currency ?? undefined,
   };
 }

@@ -20,12 +20,12 @@ COPY . .
 # по одному (--workspace-concurrency=1).
 ENV NODE_OPTIONS=--max-old-space-size=2048
 
-# Установка → генерация Prisma Client → сборка ТОЛЬКО api/worker и их пакетов
-# (синтаксис "...": пакет + его workspace-зависимости). Виджет (Next) и бот
-# в этот образ не входят — у них своё развёртывание.
+# Установка → генерация Prisma Client → сборка api/worker/bot и их пакетов
+# (синтаксис "...": пакет + его workspace-зависимости). Виджет (Next) в этот
+# образ не входит — у него своё развёртывание.
 RUN pnpm install --frozen-lockfile \
   && pnpm --filter @repo/db generate \
-  && pnpm --workspace-concurrency=1 --filter "@repo/api..." --filter "@repo/worker..." build
+  && pnpm --workspace-concurrency=1 --filter "@repo/api..." --filter "@repo/worker..." --filter "@repo/bot..." build
 
 ENV NODE_ENV=production
 

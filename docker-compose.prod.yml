@@ -82,6 +82,22 @@ services:
       api:
         condition: service_started
 
+  # Telegram-бот: ловит входящие (/start, /chatid, кнопки подтверждения) через
+  # long-polling. Исходящие сводки/план шлёт worker напрямую — это отдельный
+  # процесс. Тот же образ saas-opt, другая команда.
+  bot:
+    image: saas-opt
+    restart: unless-stopped
+    command: ["node", "apps/bot/dist/index.js"]
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      TZ: Asia/Almaty
+      DATABASE_URL: "postgresql://saas_opt:${POSTGRES_PASSWORD}@postgres:5432/saas_opt?schema=public"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   redis_data:
