@@ -11,7 +11,8 @@ import type { NormalizedDebtRow } from './debt-normalizer.js';
 
 // Порог эскалации (ADR 0007): просрочка по обещанной дате (G) больше этого числа
 // дней — должник выпадает из плана МЕНЕДЖЕРА и уходит владельцу блоком эскалации.
-// Касается только списков менеджеров; владелец в MORNING_DIGEST видит всех своих.
+// Касается только должников МЕНЕДЖЕРОВ. Владелец сам себе не эскалируется — его
+// просрочка >порога остаётся в его же списке (MORNING_DIGEST в личку).
 // Дефолт; переопределяется на организацию через OrganizationSettings.
 export const ESCALATION_OVERDUE_DAYS = 30;
 
@@ -52,7 +53,7 @@ export interface EscalationTask extends DailyTask {
 
 export interface DailyPlan {
   managers: ManagerPlan[]; // менеджеры (не владелец), у каждого свой список
-  ownerTasks: DailyTask[]; // клиенты владельца → MORNING_DIGEST собственнику
+  ownerTasks: DailyTask[]; // должники владельца с наступившим сроком (G) → MORNING_DIGEST в личку
   escalationTasks: EscalationTask[]; // >порога дней у менеджеров → MORNING_DIGEST, блок эскалации
   // Подозрение на тенге-выброс (ADR 0003): сумма нереальна для USD. Не показываем
   // как $-долг ни менеджеру, ни владельцу — выносим в блок «проверить валюту» в
@@ -101,8 +102,12 @@ export function buildDailyPlan(
       currencyReview.push(task);
       continue;
     }
-    // Владельца порог/срок не касается — все его клиенты с долгом > 0 в сводку.
+    // Владелец работает как менеджер: утренний список — только наступивший срок (G).
+    // Нет срока или срок впереди — не «напомнить сегодня», не кладём. Порог эскалации
+    // владельца не касается (эскалировать самому себе незачем) — его просрочка >порога
+    // остаётся в его же списке. Уходит в MORNING_DIGEST в личку, не в общий чат.
     if (row.isOwnerRow) {
+      if (task.daysOverdue === null || task.daysOverdue < 0) continue;
       ownerTasks.push(task);
       continue;
     }

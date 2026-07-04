@@ -10,7 +10,7 @@ import { TELEGRAM_MAX_LEN } from './telegram.js';
 function taskBody(t: DailyTask): string {
   const usd = fromMinorUnits(t.debt.amount);
   // Просрочка по обещанной дате (G): 0 — срок сегодня, >0 — просрочка N дн, <0 —
-  // срок ещё впереди (бывает только у владельца — его строки без фильтра по G).
+  // срок ещё впереди (в план не попадает; ветка оставлена для полноты).
   // null (срок не указан) — без суффикса срока.
   if (t.daysOverdue === null) return `${t.client} — $${usd}`;
   const term =

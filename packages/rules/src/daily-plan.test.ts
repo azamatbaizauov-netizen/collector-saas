@@ -138,13 +138,25 @@ describe('buildDailyPlan', () => {
     expect(plan.escalationTasks.map((t) => t.managerId)).toEqual(['m-amir', 'm-adilbek']);
   });
 
-  it('владелец без срока G всё равно попадает в ownerTasks', () => {
+  it('владелец фильтруется по сроку G как менеджер: без срока и срок впереди — не в плане', () => {
     const plan = buildDailyPlan(
-      [row({ managerId: 'm-owner', isOwnerRow: true, client: 'владелец без срока', promisedDate: null })],
+      [
+        row({ managerId: 'm-owner', isOwnerRow: true, client: 'владелец без срока', promisedDate: null }),
+        row({ managerId: 'm-owner', isOwnerRow: true, client: 'владелец срок завтра', promisedDate: due(1) }),
+        row({ managerId: 'm-owner', isOwnerRow: true, client: 'владелец просрочка', promisedDate: due(-5) }),
+      ],
       TODAY,
     );
-    expect(plan.ownerTasks.map((t) => t.client)).toEqual(['владелец без срока']);
-    expect(plan.ownerTasks[0]?.daysOverdue).toBeNull();
+    expect(plan.ownerTasks.map((t) => t.client)).toEqual(['владелец просрочка']);
+  });
+
+  it('владельца порог эскалации не касается: его просрочка >30 дней остаётся в ownerTasks', () => {
+    const plan = buildDailyPlan(
+      [row({ managerId: 'm-owner', isOwnerRow: true, client: 'владелец старая', promisedDate: due(-200) })],
+      TODAY,
+    );
+    expect(plan.ownerTasks.map((t) => t.client)).toEqual(['владелец старая']);
+    expect(plan.escalationTasks).toEqual([]);
   });
 
   it('порог эскалации переопределяется параметром', () => {
