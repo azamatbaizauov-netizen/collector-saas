@@ -72,6 +72,100 @@ bot.callbackQuery(/^reject_limit:(.+)$/, async (ctx) => {
   await ctx.answerCallbackQuery('Лимит отклонён');
 });
 
+// Подтверждение события долга (ADR 0010). Подтверждать/отклонять может ТОЛЬКО
+// владелец (сверяем tgUserId с OrganizationSettings.ownerTelegramUserId). В режиме
+// сухого прогона фиксируем решение и пишем AuditLog, но лист НЕ трогаем. Боевая
+// запись в лист (Фаза B) пока не реализована — при LIVE не помечаем APPLIED.
+async function loadOwnerGatedEvent(
+  eventId: string,
+  fromId: number | undefined,
+): Promise<
+  | { ok: true; event: NonNullable<Awaited<ReturnType<typeof prisma.debtBalanceEvent.findUnique>>>; sheetWriteMode: 'DRY_RUN' | 'LIVE' }
+  | { ok: false; reason: string }
+> {
+  const event = await prisma.debtBalanceEvent.findUnique({ where: { id: eventId } });
+  if (!event) return { ok: false, reason: 'Событие не найдено' };
+  const settings = await prisma.organizationSettings.findUnique({
+    where: { organizationId: event.organizationId },
+    select: { ownerTelegramUserId: true, sheetWriteMode: true },
+  });
+  const presser = String(fromId ?? '');
+  if (!settings?.ownerTelegramUserId || presser !== settings.ownerTelegramUserId) {
+    return { ok: false, reason: 'Подтверждать может только владелец' };
+  }
+  if (event.status !== 'PENDING') return { ok: false, reason: 'Событие уже обработано' };
+  return { ok: true, event, sheetWriteMode: settings.sheetWriteMode };
+}
+
+bot.callbackQuery(/^debtevent_apply:(.+)$/, async (ctx) => {
+  const eventId = ctx.match[1];
+  if (!eventId) return;
+  const gate = await loadOwnerGatedEvent(eventId, ctx.from?.id);
+  if (!gate.ok) {
+    await ctx.answerCallbackQuery(gate.reason);
+    return;
+  }
+  if (gate.sheetWriteMode === 'LIVE') {
+    await ctx.answerCallbackQuery('Боевая запись в лист пока не реализована (Фаза B)');
+    return;
+  }
+  const presser = String(ctx.from?.id ?? '');
+  await prisma.debtBalanceEvent.update({
+    where: { id: eventId },
+    data: { status: 'APPLIED', decidedBy: presser, decidedAt: new Date() },
+  });
+  await prisma.auditLog.create({
+    data: {
+      organizationId: gate.event.organizationId,
+      actor: presser,
+      action: 'debt.balance.applied.dryrun',
+      entityType: 'DebtBalanceEvent',
+      entityId: eventId,
+      before: { status: 'PENDING' },
+      after: {
+        status: 'APPLIED',
+        sheetWriteMode: 'DRY_RUN',
+        kind: gate.event.kind,
+        debtorPhone: gate.event.debtorPhone,
+        statedBalance: gate.event.statedBalance.toString(),
+        currency: gate.event.currency,
+      },
+    },
+  });
+  log.info({ eventId }, 'DebtBalanceEvent подтверждён (сухой прогон, лист не изменён)');
+  await ctx.answerCallbackQuery('Подтверждено (сухой прогон, лист не изменён)');
+  await ctx.editMessageReplyMarkup();
+});
+
+bot.callbackQuery(/^debtevent_reject:(.+)$/, async (ctx) => {
+  const eventId = ctx.match[1];
+  if (!eventId) return;
+  const gate = await loadOwnerGatedEvent(eventId, ctx.from?.id);
+  if (!gate.ok) {
+    await ctx.answerCallbackQuery(gate.reason);
+    return;
+  }
+  const presser = String(ctx.from?.id ?? '');
+  await prisma.debtBalanceEvent.update({
+    where: { id: eventId },
+    data: { status: 'REJECTED', decidedBy: presser, decidedAt: new Date() },
+  });
+  await prisma.auditLog.create({
+    data: {
+      organizationId: gate.event.organizationId,
+      actor: presser,
+      action: 'debt.balance.rejected',
+      entityType: 'DebtBalanceEvent',
+      entityId: eventId,
+      before: { status: 'PENDING' },
+      after: { status: 'REJECTED', debtorPhone: gate.event.debtorPhone },
+    },
+  });
+  log.info({ eventId }, 'DebtBalanceEvent отклонён владельцем');
+  await ctx.answerCallbackQuery('Отклонено');
+  await ctx.editMessageReplyMarkup();
+});
+
 bot.catch((err) => log.error({ err }, 'Bot error'));
 
 await bot.start();

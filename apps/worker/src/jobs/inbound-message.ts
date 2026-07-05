@@ -1,8 +1,9 @@
 import type { InboundMessageJob } from '@repo/messaging';
 import { prisma } from '@repo/db';
-import { createAiClient, parseReply } from '@repo/ai';
+import { createAiClient, parseReply, extractDebtBalance } from '@repo/ai';
 import { normalizePhone } from '@repo/rules';
 import type { Logger } from 'pino';
+import { sendDebtEventCard } from './debt-event-card.js';
 
 export async function processInboundMessage(job: InboundMessageJob, log: Logger): Promise<void> {
   // Группы для дебиторки не учитываем (chatId — это группа, не контрагент).
@@ -37,16 +38,25 @@ export async function processInboundMessage(job: InboundMessageJob, log: Logger)
     },
   });
 
-  // AI-парсинг — только входящие ответы клиента с текстом. Исходящие менеджера
-  // и пустые сообщения (стикеры, фото) parse-reply не разбирает.
-  if (job.isOutgoing || job.text.trim() === '') return;
+  // Пустые сообщения (стикеры, фото без подписи) AI не разбирает ни в одну сторону.
+  if (job.text.trim() === '') return;
 
   if (!process.env['ANTHROPIC_API_KEY']) {
-    log.warn({ greenApiMessageId: job.greenApiMessageId }, 'ANTHROPIC_API_KEY not set — skipping parse');
+    log.warn({ greenApiMessageId: job.greenApiMessageId }, 'ANTHROPIC_API_KEY not set — skipping AI');
     return;
   }
 
   const client = createAiClient();
+
+  // ИСХОДЯЩЕЕ менеджера (ADR 0010): менеджер фиксирует итоговый остаток долга в USD.
+  // Извлекаем число, журналируем событие и шлём владельцу карточку на подтверждение.
+  // Сухой прогон: в лист ничего не пишем — только показываем, ЧТО было бы записано.
+  if (job.isOutgoing) {
+    await handleManagerBalance(job, phone, channel?.managerId ?? null, client, log);
+    return;
+  }
+
+  // ВХОДЯЩЕЕ — ответ клиента на напоминание об оплате.
   const parsed = await parseReply(client, job.text, new Date(job.receivedAt));
 
   log.info(
@@ -61,5 +71,59 @@ export async function processInboundMessage(job: InboundMessageJob, log: Logger)
   );
 
   // TODO: персистенция Reminder (source: MANAGER) + Promise — заблокировано
-  // до настройки Bitrix: нужен contactId по номеру телефона (crm.contact resolve).
+  // до резолва contactId по номеру телефона из источника дебиторки.
+}
+
+async function handleManagerBalance(
+  job: InboundMessageJob,
+  phone: string,
+  managerId: string | null,
+  client: ReturnType<typeof createAiClient>,
+  log: Logger,
+): Promise<void> {
+  const extracted = await extractDebtBalance(client, job.text);
+  if (!extracted.hasBalance || extracted.balanceUsd == null) return;
+
+  // Идемпотентность (ADR 0010): одно сообщение = одно событие. Повторная доставка
+  // того же greenApiMessageId не журналируется и не шлёт карточку дважды.
+  const existing = await prisma.debtBalanceEvent.findUnique({
+    where: {
+      organizationId_greenApiMessageId: {
+        organizationId: job.organizationId,
+        greenApiMessageId: job.greenApiMessageId,
+      },
+    },
+    select: { id: true },
+  });
+  if (existing) {
+    log.info({ greenApiMessageId: job.greenApiMessageId }, 'DebtBalanceEvent уже журналирован, пропуск');
+    return;
+  }
+
+  const event = await prisma.debtBalanceEvent.create({
+    data: {
+      organizationId: job.organizationId,
+      managerId,
+      debtorPhone: phone,
+      statedBalance: extracted.balanceUsd,
+      currency: 'USD',
+      kind: extracted.kind,
+      rawText: job.text,
+      greenApiMessageId: job.greenApiMessageId,
+      status: 'PENDING',
+    },
+  });
+
+  log.info(
+    {
+      organizationId: job.organizationId,
+      eventId: event.id,
+      phone,
+      kind: extracted.kind,
+      balanceUsd: extracted.balanceUsd.toString(),
+    },
+    'DebtBalanceEvent журналирован из фиксации менеджера',
+  );
+
+  await sendDebtEventCard(event.id, log);
 }

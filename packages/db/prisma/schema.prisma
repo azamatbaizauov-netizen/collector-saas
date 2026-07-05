@@ -39,6 +39,7 @@ model Organization {
   webhookProcessed    WebhookProcessed[]
   debtSheetState      DebtSheetState?
   whatsappTouches     WhatsAppTouch[]
+  debtBalanceEvents   DebtBalanceEvent[]
 }
 
 // ---------------------------------------------------------------------------
@@ -68,7 +69,18 @@ model OrganizationSettings {
   telegramGroupChatId String?
   ownerTelegramUserId String?
 
+  // Запись событий долга обратно в лист (ADR 0010). DRY_RUN — только показываем
+  // владельцу, что записали бы, лист НЕ трогаем. LIVE — пишем после подтверждения.
+  sheetWriteMode  SheetWriteMode @default(DRY_RUN)
+  // «Неделя после возврата» (ADR 0010): новый срок G = дата оплаты + это число дней.
+  gracePeriodDays Int            @default(7)
+
   updatedAt DateTime @updatedAt
+}
+
+enum SheetWriteMode {
+  DRY_RUN // Обкатка: карточка владельцу с превью, запись в лист не выполняется
+  LIVE // Боевой режим: по подтверждению владельца пишем в лист
 }
 
 // ---------------------------------------------------------------------------
@@ -375,6 +387,50 @@ model WhatsAppTouch {
 enum TouchDirection {
   INCOMING // сообщение от клиента
   OUTGOING // менеджер написал сам (= «связался», идёт в счётчик покрытия)
+}
+
+// ---------------------------------------------------------------------------
+// DebtBalanceEvent — журнал событий долга из личной переписки (ADR 0010).
+// Основа — менеджер фиксирует ТЕКСТОМ итоговый остаток долга клиента в USD
+// (согласовано с владельцем: всегда абсолют, не дельта). Привязка к должнику —
+// по номеру телефона личного чата (в отличие от групп-чеков ADR 0008, где номера нет).
+// Это НЕ копия долга (принцип 1) — журнал предложений на запись в лист + решение
+// владельца. В dry-run лист не трогаем; в LIVE по подтверждению пишем (Фаза B).
+// ---------------------------------------------------------------------------
+
+model DebtBalanceEvent {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  managerId      String? // кто зафиксировал (из WhatsAppChannel по instanceId)
+  debtorPhone    String // E.164 клиента из личного чата — ключ привязки к строке листа
+  // Итоговый остаток долга в минорных единицах USD (тиыны/центы). Никогда не float.
+  statedBalance     BigInt
+  currency          String           @default("USD")
+  kind              DebtEventKind    @default(UNKNOWN)
+  rawText           String // исходный текст менеджера — для аудита и разбора
+  greenApiMessageId String // идемпотентность приёма
+  status            DebtEventStatus  @default(PENDING)
+  decidedBy         String? // telegramUserId владельца, принявшего решение
+  decidedAt         DateTime?
+  aiActionId        String? // лог вызова Claude (extract-balance)
+  createdAt         DateTime         @default(now())
+
+  @@unique([organizationId, greenApiMessageId])
+  @@index([organizationId, status])
+  @@index([organizationId, debtorPhone])
+}
+
+enum DebtEventKind {
+  PAYMENT // погашение: менеджер назвал остаток после оплаты (→ правило +gracePeriodDays)
+  NEW_DEBT // образование долга: новый остаток после отгрузки в долг
+  UNKNOWN // остаток назван, но контекст не распознан
+}
+
+enum DebtEventStatus {
+  PENDING // ждём решения владельца
+  APPLIED // владелец подтвердил (в dry-run — записали бы; в LIVE — записано в лист)
+  REJECTED // владелец отклонил
 }
 
 // ---------------------------------------------------------------------------
