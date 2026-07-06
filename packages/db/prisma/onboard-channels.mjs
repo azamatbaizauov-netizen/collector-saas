@@ -15,7 +15,9 @@ import { PrismaClient } from '@prisma/client';
 // ]
 // managerKey — ключ из MANAGERS в seed.mjs (adilbek|amir|halima|savutzhan|bibigul|owner).
 
-const ORG_ID = process.env.PILOT_ORGANIZATION_ID || 'pilot';
+// ORG_ID — generic для любого клиента (ADR 0011); PILOT_ORGANIZATION_ID — фолбэк
+// для пилота, чтобы старые команды не сломались.
+const ORG_ID = process.env.ORG_ID || process.env.PILOT_ORGANIZATION_ID || 'pilot';
 const GREEN_API_URL = process.env.GREEN_API_URL || 'https://api.green-api.com';
 
 const prisma = new PrismaClient();

@@ -25,17 +25,28 @@ export async function loadAliasMap(organizationId: string): Promise<AliasMap> {
   return map;
 }
 
-// Источник дебиторки из env. null — не сконфигурирован (воркер деградирует с warn).
-export function getDebtSource(): GoogleSheetDebtSource | null {
+// Источник дебиторки per-org (ADR 0011). file_id берём из Organization в БД —
+// у каждого клиента свой лист. Пилот исторически жил на env DEBT_SHEET_FILE_ID:
+// оставляем фолбэк, чтобы прод не упал, пока debtSheetFileId не проставлен в БД
+// (seed.mjs записывает его при онбординге). Креды сервисного аккаунта — общие, из
+// env. null — источник не сконфигурирован (воркер деградирует с warn).
+export async function getDebtSourceForOrg(
+  organizationId: string,
+): Promise<GoogleSheetDebtSource | null> {
   const credentialsPath = process.env['GOOGLE_APPLICATION_CREDENTIALS'];
-  const fileId = process.env['DEBT_SHEET_FILE_ID'];
-  if (!credentialsPath || !fileId) return null;
+  if (!credentialsPath) return null;
+  const org = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { debtSheetFileId: true },
+  });
+  const fileId = org?.debtSheetFileId ?? process.env['DEBT_SHEET_FILE_ID'];
+  if (!fileId) return null;
   return new GoogleSheetDebtSource({ credentialsPath, fileId });
 }
 
 // Читает лист, нормализует, строит план дня. null — источник не сконфигурирован.
 export async function loadDailyPlan(organizationId: string): Promise<DailyPlan | null> {
-  const source = getDebtSource();
+  const source = await getDebtSourceForOrg(organizationId);
   if (!source) return null;
   const aliases = await loadAliasMap(organizationId);
   const snapshot = await source.fetchSnapshot();

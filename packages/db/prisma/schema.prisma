@@ -19,6 +19,10 @@ model Organization {
   name           String
   bitrixPortalId String  @unique
   bitrixWebhook  String // B24_INCOMING_WEBHOOK; в Фазе 2 заменится на OAuth-токены
+  // file_id таблицы дебиторки клиента в Google Drive (ADR 0003/0011). Per-org:
+  // сервисный аккаунт один (env), а лист у каждого клиента свой. null — источник
+  // не сконфигурирован, воркер деградирует с warn.
+  debtSheetFileId String?
   isActive       Boolean @default(true)
 
   createdAt DateTime @default(now())

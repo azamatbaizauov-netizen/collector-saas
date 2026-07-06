@@ -1,6 +1,6 @@
 import { prisma } from '@repo/db';
 import { normalizeDebtRow } from '@repo/rules';
-import { getDebtSource, loadAliasMap } from '../debt-data.js';
+import { getDebtSourceForOrg, loadAliasMap } from '../debt-data.js';
 import pino from 'pino';
 
 const log = pino({ level: process.env['LOG_LEVEL'] ?? 'info' });
@@ -12,9 +12,12 @@ const log = pino({ level: process.env['LOG_LEVEL'] ?? 'info' });
 export async function processDebtSheetPoll(data: { organizationId: string }): Promise<void> {
   const { organizationId } = data;
 
-  const source = getDebtSource();
+  const source = await getDebtSourceForOrg(organizationId);
   if (!source) {
-    log.warn({ organizationId }, 'DEBT_SHEET_POLL: нет GOOGLE_APPLICATION_CREDENTIALS/DEBT_SHEET_FILE_ID, пропуск');
+    log.warn(
+      { organizationId },
+      'DEBT_SHEET_POLL: нет GOOGLE_APPLICATION_CREDENTIALS или debtSheetFileId (БД/env), пропуск',
+    );
     return;
   }
 

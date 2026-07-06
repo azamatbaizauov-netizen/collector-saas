@@ -9,6 +9,8 @@
     "migrate:dev": "dotenv -e ../../.env -- prisma migrate dev",
     "migrate:deploy": "dotenv -e ../../.env -- prisma migrate deploy",
     "seed": "dotenv -e ../../.env -- prisma db seed",
+    "onboard:org": "dotenv -e ../../.env -- node prisma/onboard-org.mjs",
+    "onboard:managers": "dotenv -e ../../.env -- node prisma/onboard-managers.mjs",
     "onboard": "dotenv -e ../../.env -- node prisma/onboard-channels.mjs",
     "studio": "dotenv -e ../../.env -- prisma studio",
     "build": "tsc",

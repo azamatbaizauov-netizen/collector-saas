@@ -1,48 +1,11 @@
 import { PrismaClient } from '@prisma/client';
+import { DEFAULT_SETTINGS, seedScheduleJobs } from './default-settings.mjs';
 
 const prisma = new PrismaClient();
 
 // Идентификатор пилотной организации фиксированный, чтобы PILOT_ORGANIZATION_ID
 // в .env был детерминированным и не зависел от автогенерации cuid.
 const ORG_ID = process.env.PILOT_ORGANIZATION_ID || 'pilot';
-
-// Дефолтные бизнес-правила пилота (см. CLAUDE.md → Бизнес-логика).
-// Алдияр согласует с практикой оптового рынка КЗ перед запуском.
-const DEFAULT_SETTINGS = {
-  ratingRules: {
-    reliable: { periodMonths: 6, maxOverdueDays: 0, minPayments: 5 },
-    normal: { maxOverdues: 2, maxOverdueDays: 7 },
-    risk: { minOverdues: 3, orOverdueDaysGt: 14 },
-    dangerous: { overdueDaysGt: 30, orBrokenPromisesInRow: 2 },
-    stop: { overdueDaysGt: 60, orDebtOverLimitMultiplier: 2 },
-  },
-  limitRules: {
-    onTimePaymentsForIncrease: 3,
-    increasePct: 20,
-    decreaseOnOverduePct: 15,
-    zeroOnRatings: ['dangerous', 'stop'],
-  },
-  reminderTones: {
-    soft: [0, 3],
-    persistent: [4, 10],
-    hard: [11, 30],
-    final: [31, null],
-  },
-  scheduleConfig: {
-    // Времена по локальной TZ воркера (в проде TZ=Asia/Almaty, docker-compose.prod.yml).
-    ratingRecalc: '0 2 * * *',
-    dailyCallList: '30 9 * * *', // план дня менеджерам в общий чат в 09:30 (ADR 0004)
-    ownerSummary: '0 8 * * *',
-    cutoffCoverage: '0 14 * * *', // в 14:00 напоминание-счётчик: кто ещё не написал (ADR 0006)
-    finalCoverage: '0 17 * * *', // в 17:00 финал: кто так и не вышел на связь (ADR 0006)
-    debtSheetPoll: '0 * * * *', // опрос Google Sheet дебиторки раз в час (ADR 0003; отчёты всё равно читают лист живьём)
-  },
-  templateConfig: {
-    generateReminder: 'reminders/v1',
-    parseReply: 'conversations/parse-reply/v1',
-  },
-  whatsappRateLimit: 30,
-};
 
 // Состав пилота (ADR 0005). id фиксированный и детерминированный, чтобы сид
 // был идемпотентным (Manager нельзя upsert'ить по telegramUserId — он null
@@ -90,39 +53,20 @@ async function seedManagers(orgId) {
   }
 }
 
-// Расписания воркеров (ScheduleJob) — источник истины по cron на организацию.
-// Регистратор воркера превращает активные строки в BullMQ Job Schedulers.
-// RATING_RECALC/PROMISE_FOLLOWUP пока заглушки — не бутстрапим, чтобы не
-// гонять пустые задачи. DAILY_PLAN/MORNING_DIGEST/DAILY_OVERDUE_CHECK шлют в
-// Telegram и деградируют с warn, пока не настроен TELEGRAM_BOT_TOKEN/chat id
-// (ADR 0004; счётчик покрытия — ADR 0006).
-async function seedScheduleJobs(orgId, scheduleConfig) {
-  const jobs = [
-    { jobType: 'DEBT_SHEET_POLL', cron: scheduleConfig.debtSheetPoll },
-    { jobType: 'DAILY_PLAN', cron: scheduleConfig.dailyCallList },
-    { jobType: 'MORNING_DIGEST', cron: scheduleConfig.ownerSummary },
-    { jobType: 'DAILY_OVERDUE_CHECK', cron: scheduleConfig.cutoffCoverage },
-    { jobType: 'FINAL_COVERAGE', cron: scheduleConfig.finalCoverage },
-  ];
-  for (const j of jobs) {
-    await prisma.scheduleJob.upsert({
-      where: { organizationId_jobType: { organizationId: orgId, jobType: j.jobType } },
-      update: { cronExpression: j.cron, isActive: true },
-      create: { organizationId: orgId, jobType: j.jobType, cronExpression: j.cron, isActive: true },
-    });
-    console.log(`ScheduleJob: ${j.jobType} → ${j.cron}`);
-  }
-}
-
 async function main() {
+  // debtSheetFileId переносим из env в БД (ADR 0011): source of truth по листу —
+  // теперь Organization, а не env. Фолбэк на env в воркере остаётся, пока прод
+  // не пересеян. Пустой env → не затираем уже сохранённый в БД file_id.
+  const debtSheetFileId = process.env.DEBT_SHEET_FILE_ID || undefined;
   const org = await prisma.organization.upsert({
     where: { id: ORG_ID },
-    update: {},
+    update: { ...(debtSheetFileId ? { debtSheetFileId } : {}) },
     create: {
       id: ORG_ID,
       name: process.env.PILOT_ORGANIZATION_NAME || 'Пилотный клиент',
       bitrixPortalId: process.env.B24_PORTAL_ID || `${ORG_ID}.bitrix24.kz`,
       bitrixWebhook: process.env.B24_INCOMING_WEBHOOK || '',
+      ...(debtSheetFileId ? { debtSheetFileId } : {}),
     },
   });
   console.log(`Organization: ${org.id} (${org.name})`);
@@ -136,7 +80,7 @@ async function main() {
 
   await seedManagers(org.id);
 
-  await seedScheduleJobs(org.id, DEFAULT_SETTINGS.scheduleConfig);
+  await seedScheduleJobs(prisma, org.id, DEFAULT_SETTINGS.scheduleConfig);
 
   // WhatsApp-канал бутстрапится из env, чтобы токен инстанса не попадал в git.
   // Источник истины после seed — таблица WhatsAppChannel.
