@@ -88,11 +88,17 @@ export function isShiftedMopCell(raw: unknown): boolean {
 // Телефон → E.164. Часто хранится как float (77757349292.0). KZ (+7) и KG (+996).
 export function normalizePhone(raw: unknown): string | null {
   if (raw == null || raw === '') return null;
-  const digits =
+  let digits =
     typeof raw === 'number' ? String(Math.trunc(raw)) : String(raw).replace(/\D/g, '');
+  // Приводим все варианты записи KZ-номера к международному виду 7XXXXXXXXXX (11 цифр):
+  //  - 8 777… (ведущая 8) → 7 777… (та же +7)
+  //  - 777… (10 цифр, «голый» национальный без кода страны) → добавляем 7
+  //  - 7 777… / +7 777… (11 цифр) — уже в нужном виде
+  if (/^8\d{10}$/.test(digits)) digits = `7${digits.slice(1)}`;
+  else if (/^7\d{9}$/.test(digits)) digits = `7${digits}`;
   if (/^7\d{10}$/.test(digits)) return `+${digits}`;
   if (/^996\d{9}$/.test(digits)) return `+${digits}`;
-  return null; // битый/10-значный/пустой
+  return null; // битый/слишком короткий/чужой код
 }
 
 // Сумма в мажорных единицах (доллары) или null. Принимает number и строку.

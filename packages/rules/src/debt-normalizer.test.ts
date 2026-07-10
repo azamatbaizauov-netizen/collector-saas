@@ -57,11 +57,22 @@ describe('normalizePhone', () => {
     expect(normalizePhone(77757349292.0)).toBe('+77757349292');
     expect(normalizePhone('77000248707')).toBe('+77000248707');
   });
+  it('KZ во всех формах записи → один E.164', () => {
+    // 8 778 159 89 55 записан по-разному — результат одинаковый
+    expect(normalizePhone('+77781598955')).toBe('+77781598955'); // +7 …
+    expect(normalizePhone('87781598955')).toBe('+77781598955'); // 8 …
+    expect(normalizePhone('77781598955')).toBe('+77781598955'); // 7 …
+    expect(normalizePhone('7781598955')).toBe('+77781598955'); // без кода, сразу с оператора
+    expect(normalizePhone('8 (778) 159-89-55')).toBe('+77781598955'); // с разделителями
+    expect(normalizePhone('87075551235')).toBe('+77075551235');
+    expect(normalizePhone(87757349292.0)).toBe('+77757349292'); // float с 8
+  });
   it('Кыргызстан 996', () => {
     expect(normalizePhone('996700112233')).toBe('+996700112233');
   });
   it('битый/пустой → null', () => {
-    expect(normalizePhone('7700024870')).toBeNull(); // 10 цифр
+    expect(normalizePhone('778159895')).toBeNull(); // 9 цифр — слишком коротко
+    expect(normalizePhone('12025550173')).toBeNull(); // чужой код страны
     expect(normalizePhone('')).toBeNull();
     expect(normalizePhone(null)).toBeNull();
   });
@@ -127,7 +138,7 @@ describe('normalizeDebtRow', () => {
   });
 
   it('битый телефон → broken_phone (менеджер уже определён)', () => {
-    const r = normalizeDebtRow(baseRow({ phone: '7700024870' }), aliases);
+    const r = normalizeDebtRow(baseRow({ phone: '770002487' }), aliases); // 9 цифр — слишком коротко
     expect(r.kind).toBe('rejected');
     if (r.kind !== 'rejected') return;
     expect(r.reason).toBe('broken_phone');
