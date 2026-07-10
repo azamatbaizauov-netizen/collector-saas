@@ -7,6 +7,7 @@ import { processMorningDigest } from './jobs/morning-digest.js';
 import { processPromiseFollowup } from './jobs/promise-followup.js';
 import { processDebtSheetPoll } from './jobs/debt-sheet-poll.js';
 import { processDailyPlan } from './jobs/daily-plan.js';
+import { processPaymentDigest } from './jobs/payment-digest.js';
 import { processInboundMessage } from './jobs/inbound-message.js';
 import { registerScheduleJobs } from './scheduler.js';
 import pino from 'pino';
@@ -32,6 +33,8 @@ const worker = new Worker(
         return processDebtSheetPoll(job.data as { organizationId: string });
       case 'DAILY_PLAN':
         return processDailyPlan(job.data as { organizationId: string });
+      case 'PAYMENT_DIGEST':
+        return processPaymentDigest(job.data as { organizationId: string });
       default:
         log.warn({ jobName: job.name }, 'Unknown job type');
     }

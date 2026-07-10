@@ -2,4 +2,8 @@ export { generateReminder } from './reminders/generate.js';
 export { parseReply } from './conversations/parse-reply.js';
 export { extractDebtBalance } from './conversations/extract-balance.js';
 export type { ExtractedBalance, DebtEventKind } from './conversations/extract-balance.js';
+export { parseReceipt } from './receipts/parse-receipt.js';
+export type { ParsedReceipt, ReceiptMedia, ReceiptDocType } from './receipts/parse-receipt.js';
+export { summarizeDayPayments } from './receipts/summarize-day.js';
+export type { DaySummary, DayPayer } from './receipts/summarize-day.js';
 export { createAiClient } from './client.js';

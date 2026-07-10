@@ -3,12 +3,15 @@ import { prisma } from '@repo/db';
 import { createAiClient, parseReply, extractDebtBalance } from '@repo/ai';
 import { normalizePhone } from '@repo/rules';
 import type { Logger } from 'pino';
-import { sendDebtEventCard } from './debt-event-card.js';
+import { processGroupMessage } from './group-message.js';
 
 export async function processInboundMessage(job: InboundMessageJob, log: Logger): Promise<void> {
-  // Группы для дебиторки не учитываем (chatId — это группа, не контрагент).
+  // Группа — отдельный пайплайн (ADR 0008): копим ленту в дневной буфер, вечером
+  // Sonnet кластеризует «сколько вернуло долг» (PAYMENT_DIGEST). В счётчик покрытия
+  // (ADR 0006) группы НЕ идут — WhatsAppTouch здесь не пишем (chatId — это группа,
+  // а не номер контрагента).
   if (job.isGroup) {
-    log.info({ greenApiMessageId: job.greenApiMessageId }, 'Skipping group message');
+    await processGroupMessage(job, log);
     return;
   }
 
@@ -125,5 +128,7 @@ async function handleManagerBalance(
     'DebtBalanceEvent журналирован из фиксации менеджера',
   );
 
-  await sendDebtEventCard(event.id, log);
+  // Карточку остатка владельцу (ADR 0010) пока НЕ шлём — по решению владельца из
+  // личных чатов ничего не отправляем, только собираем событие в БД. Включается
+  // обратно вызовом sendDebtEventCard(event.id, log) (apps/worker/jobs/debt-event-card.ts).
 }

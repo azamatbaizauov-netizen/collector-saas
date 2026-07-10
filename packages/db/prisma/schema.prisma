@@ -44,6 +44,7 @@ model Organization {
   debtSheetState      DebtSheetState?
   whatsappTouches     WhatsAppTouch[]
   debtBalanceEvents   DebtBalanceEvent[]
+  groupDayMessages    GroupDayMessage[]
 }
 
 // ---------------------------------------------------------------------------
@@ -438,6 +439,38 @@ enum DebtEventStatus {
 }
 
 // ---------------------------------------------------------------------------
+// GroupDayMessage — дневной буфер ленты рабочей WhatsApp-группы «чеки» (ADR 0008)
+// Копим ВСЕ сообщения группы за сутки (текст + строку разбора чека vision'ом),
+// чтобы вечером (PAYMENT_DIGEST, 18:00 Almaty) отдать транскрипт Sonnet: он по
+// смыслу кластеризует, сколько РАЗНЫХ людей вернуло долг и на какую сумму
+// (несколько чеков + скрин курса от одного менеджера ≠ несколько человек).
+// Это НЕ копия долга (принцип 1) и НЕ журнал событий — временный буфер под
+// дневную сводку. Идемпотентность приёма — по (organizationId, greenApiMessageId).
+// ---------------------------------------------------------------------------
+
+model GroupDayMessage {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  groupChatId    String // id группы (@g.us) — источник ленты
+  senderPhone    String? // кто в группе запостил (E.164) — для контекста кластеризации
+  greenApiMessageId String // идемпотентность приёма
+  // Тип исходного сообщения Green API: textMessage | imageMessage | documentMessage
+  messageType    String
+  // Текст сообщения (для textMessage) — исходный, без изменений.
+  text           String?
+  // Строка разбора чека vision'ом (docType/сумма/валюта/плательщик/…), если было медиа.
+  // Свободный текст — его же читает Sonnet при кластеризации. null для чистого текста.
+  receiptLine    String?
+  // Сутки, к которым отнесено сообщение (00:00 Asia/Almaty). Ключ выборки для сводки.
+  businessDay    DateTime     @db.Date
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, greenApiMessageId])
+  @@index([organizationId, businessDay])
+}
+
+// ---------------------------------------------------------------------------
 // ScheduleJob — расписания воркеров на организацию
 // ---------------------------------------------------------------------------
 
@@ -465,6 +498,7 @@ enum ScheduleJobType {
   DEBT_SHEET_POLL // Опрос Google Sheet дебиторки: при смене version — импорт (ADR 0003)
   DAILY_PLAN // 09:30 план дня менеджерам в общий Telegram-чат по @username (ADR 0004, механика 1)
   FINAL_COVERAGE // 17:00 финальный счётчик: кто так и не вышел на связь сегодня (ADR 0006)
+  PAYMENT_DIGEST // 18:00 дневная сводка владельцу: сколько человек вернуло долг и на сумму (ADR 0008)
 }
 
 // ---------------------------------------------------------------------------

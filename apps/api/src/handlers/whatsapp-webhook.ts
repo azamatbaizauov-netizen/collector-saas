@@ -42,6 +42,10 @@ export async function handleWhatsappWebhook(body: Record<string, unknown>): Prom
     isOutgoing: message.isOutgoing,
     messageType: message.messageType,
     text: message.text,
+    downloadUrl: message.downloadUrl,
+    mimeType: message.mimeType,
+    fileName: message.fileName,
+    senderPhone: message.senderPhone,
     greenApiMessageId: message.greenApiMessageId,
     receivedAt: message.receivedAt.toISOString(),
   });

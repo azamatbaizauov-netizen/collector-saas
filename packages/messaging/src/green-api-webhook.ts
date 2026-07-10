@@ -11,7 +11,12 @@ interface GreenApiWebhookBody {
     typeMessage?: string;
     textMessageData?: { textMessage?: string };
     extendedTextMessageData?: { text?: string };
-    fileMessageData?: { caption?: string };
+    fileMessageData?: {
+      caption?: string;
+      downloadUrl?: string;
+      mimeType?: string;
+      fileName?: string;
+    };
   };
 }
 
@@ -52,6 +57,8 @@ export function parseGreenApiWebhook(raw: unknown): InboundMessage | null {
   if (!md) return null;
 
   const isGroup = chatId.endsWith('@g.us');
+  const file = md.fileMessageData;
+  const sender = body.senderData?.sender;
   return {
     instanceId: String(instanceIdRaw),
     chatId,
@@ -61,6 +68,10 @@ export function parseGreenApiWebhook(raw: unknown): InboundMessage | null {
     isOutgoing: typeWebhook !== 'incomingMessageReceived',
     messageType: md.typeMessage ?? 'unknown',
     text: extractText(md),
+    downloadUrl: file?.downloadUrl,
+    mimeType: file?.mimeType,
+    fileName: file?.fileName,
+    senderPhone: sender ? stripSuffix(sender) : undefined,
     greenApiMessageId: messageId,
     receivedAt: body.timestamp ? new Date(body.timestamp * 1000) : new Date(),
   };

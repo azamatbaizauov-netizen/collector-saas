@@ -29,6 +29,7 @@ export const DEFAULT_SETTINGS = {
     ownerSummary: '0 8 * * *',
     cutoffCoverage: '0 14 * * *', // в 14:00 напоминание-счётчик: кто ещё не написал (ADR 0006)
     finalCoverage: '0 17 * * *', // в 17:00 финал: кто так и не вышел на связь (ADR 0006)
+    paymentDigest: '0 18 * * *', // в 18:00 сводка владельцу: сколько вернуло долг и на сумму (ADR 0008)
     debtSheetPoll: '0 * * * *', // опрос Google Sheet дебиторки раз в час (ADR 0003)
   },
   templateConfig: {
@@ -50,6 +51,7 @@ export async function seedScheduleJobs(prisma, orgId, scheduleConfig) {
     { jobType: 'MORNING_DIGEST', cron: scheduleConfig.ownerSummary },
     { jobType: 'DAILY_OVERDUE_CHECK', cron: scheduleConfig.cutoffCoverage },
     { jobType: 'FINAL_COVERAGE', cron: scheduleConfig.finalCoverage },
+    { jobType: 'PAYMENT_DIGEST', cron: scheduleConfig.paymentDigest },
   ];
   for (const j of jobs) {
     await prisma.scheduleJob.upsert({

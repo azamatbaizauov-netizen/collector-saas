@@ -11,10 +11,17 @@ export interface InboundMessage {
   phone: string;
   isGroup: boolean;
   isOutgoing: boolean;
-  // Тип сообщения Green API: textMessage | imageMessage | audioMessage | ...
+  // Тип сообщения Green API: textMessage | imageMessage | documentMessage | ...
   messageType: string;
   // Текст: из textMessage / extendedText / подписи к файлу (caption).
   text: string;
+  // Медиа-вложение (ADR 0008): прямая ссылка Green API на файл (чек-картинка/PDF)
+  // и его mime/имя. Есть только у file-сообщений; для текста undefined.
+  downloadUrl?: string | undefined;
+  mimeType?: string | undefined;
+  fileName?: string | undefined;
+  // Кто отправил в группе (senderData.sender) — для аудита событий долга.
+  senderPhone?: string | undefined;
   greenApiMessageId: string;
   receivedAt: Date;
 }
@@ -33,6 +40,10 @@ export interface InboundMessageJob {
   isOutgoing: boolean;
   messageType: string;
   text: string;
+  downloadUrl?: string | undefined;
+  mimeType?: string | undefined;
+  fileName?: string | undefined;
+  senderPhone?: string | undefined;
   greenApiMessageId: string;
   receivedAt: string;
 }
