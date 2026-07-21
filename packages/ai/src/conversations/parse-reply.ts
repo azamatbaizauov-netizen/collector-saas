@@ -1,6 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import type { ReplyIntent } from '@repo/shared';
 import { z } from 'zod';
+import { reportUsage, type UsageSink } from '../pricing.js';
 
 const MODEL = 'claude-haiku-4-5-20251001';
 
@@ -22,7 +23,9 @@ export async function parseReply(
   client: Anthropic,
   replyText: string,
   contextDate: Date = new Date(),
+  onUsage?: UsageSink,
 ): Promise<ParsedReply> {
+  const startedAt = Date.now();
   const message = await client.messages.create({
     model: MODEL,
     max_tokens: 200,
@@ -48,6 +51,8 @@ export async function parseReply(
       },
     ],
   });
+
+  reportUsage(onUsage, MODEL, message.usage, startedAt);
 
   const raw = message.content[0];
   if (!raw || raw.type !== 'text') throw new Error('Unexpected AI response type');

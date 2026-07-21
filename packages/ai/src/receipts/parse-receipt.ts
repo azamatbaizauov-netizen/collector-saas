@@ -1,5 +1,6 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
+import { reportUsage, type UsageSink } from '../pricing.js';
 
 // Vision-разбор документов из рабочих WhatsApp-групп (ADR 0008): чек оплаты
 // (Kaspi/банк — картинка или PDF) и скрин курса обмена валют. Haiku 4.5 —
@@ -86,7 +87,9 @@ function buildMediaBlock(media: ReceiptMedia): Anthropic.Messages.ContentBlockPa
 export async function parseReceipt(
   client: Anthropic,
   media: ReceiptMedia,
+  onUsage?: UsageSink,
 ): Promise<ParsedReceipt> {
+  const startedAt = Date.now();
   const message = await client.messages.create({
     model: MODEL,
     max_tokens: 400,
@@ -98,6 +101,8 @@ export async function parseReceipt(
       },
     ],
   });
+
+  reportUsage(onUsage, MODEL, message.usage, startedAt);
 
   const raw = message.content[0];
   if (!raw || raw.type !== 'text') throw new Error('Unexpected AI response type');

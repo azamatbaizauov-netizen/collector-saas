@@ -2,6 +2,7 @@ import { prisma } from '@repo/db';
 import { createAiClient, summarizeDayPayments } from '@repo/ai';
 import { normalizePhone } from '@repo/rules';
 import { getTelegramApi } from '../telegram.js';
+import { withAiCost } from '../lib/ai-cost.js';
 import pino from 'pino';
 
 const log = pino({ level: process.env['LOG_LEVEL'] ?? 'info' });
@@ -10,8 +11,8 @@ const log = pino({ level: process.env['LOG_LEVEL'] ?? 'info' });
 // группы «чеки», Sonnet кластеризует «сколько РАЗНЫХ людей вернуло долг», код
 // детерминированно суммирует по каждой валюте (правила, а не магия — принцип 5).
 // Сумму НЕ конвертируем: тенге и доллары показываем раздельно. Информирование,
-// долг в листе не меняем (принцип 1). Постим в общий чат [собственник + МОПы]
-// (telegramGroupChatId) с разбивкой по менеджерам — Медет там же её видит.
+// долг в листе не меняем (принцип 1). Шлём в ЛИЧКУ собственнику (ownerTelegramUserId)
+// с разбивкой по менеджерам — по его просьбе, не в общий чат (см. owner-private).
 
 function almatyToday(): Date {
   const shifted = new Date(Date.now() + 5 * 60 * 60 * 1000);
@@ -52,12 +53,12 @@ export async function processPaymentDigest(data: { organizationId: string }): Pr
   const api = getTelegramApi();
   const settings = await prisma.organizationSettings.findUnique({
     where: { organizationId },
-    select: { telegramGroupChatId: true },
+    select: { ownerTelegramUserId: true },
   });
-  if (!api || !settings?.telegramGroupChatId) {
+  if (!api || !settings?.ownerTelegramUserId) {
     log.warn(
       { organizationId, buffered: messages.length },
-      'PAYMENT_DIGEST: нет TELEGRAM_BOT_TOKEN/telegramGroupChatId — сводка не отправлена',
+      'PAYMENT_DIGEST: нет TELEGRAM_BOT_TOKEN/ownerTelegramUserId — сводка не отправлена',
     );
     return;
   }
@@ -93,7 +94,16 @@ export async function processPaymentDigest(data: { organizationId: string }): Pr
     })
     .join('\n');
 
-  const summary = await summarizeDayPayments(createAiClient(), transcript);
+  const summary = await withAiCost(
+    {
+      scenario: 'summarize-day',
+      organizationId,
+      inputSummary: `msgs=${messages.length},len=${transcript.length}`,
+      log,
+    },
+    (onUsage) => summarizeDayPayments(createAiClient(), transcript, onUsage),
+    (r) => `payers=${r.payers.length}`,
+  );
   const payerCount = summary.payers.length;
 
   // Детерминированные подсчёты (модель не суммирует — принцип 5): общая сумма по
@@ -127,10 +137,10 @@ export async function processPaymentDigest(data: { organizationId: string }): Pr
       `\n\nℹ️ Информационно по ленте группы. Долг в таблице не меняем.`;
   }
 
-  await api.sendMessage(settings.telegramGroupChatId, text);
+  await api.sendMessage(settings.ownerTelegramUserId, text);
 
   log.info(
     { organizationId, payerCount, managers: perManager.size, currencies: [...byCurrency.keys()] },
-    'PAYMENT_DIGEST: сводка возвратов отправлена в общий чат',
+    'PAYMENT_DIGEST: сводка возвратов отправлена собственнику в личку',
   );
 }

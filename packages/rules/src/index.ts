@@ -21,5 +21,6 @@ export type {
   AliasMap,
   AliasResolution,
 } from './debt-normalizer.js';
+export { isNoiseMessage } from './noise-filter.js';
 export { buildDailyPlan, daysOverduePromised, ESCALATION_OVERDUE_DAYS } from './daily-plan.js';
 export type { DailyPlan, ManagerPlan, DailyTask, EscalationTask } from './daily-plan.js';

@@ -7,3 +7,5 @@ export type { ParsedReceipt, ReceiptMedia, ReceiptDocType } from './receipts/par
 export { summarizeDayPayments } from './receipts/summarize-day.js';
 export type { DaySummary, DayPayer } from './receipts/summarize-day.js';
 export { createAiClient } from './client.js';
+export { estimateCostMicrodollars } from './pricing.js';
+export type { AiUsage, UsageSink } from './pricing.js';

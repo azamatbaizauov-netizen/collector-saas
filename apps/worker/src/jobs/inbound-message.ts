@@ -1,9 +1,10 @@
 import type { InboundMessageJob } from '@repo/messaging';
 import { prisma } from '@repo/db';
 import { createAiClient, parseReply, extractDebtBalance } from '@repo/ai';
-import { normalizePhone } from '@repo/rules';
+import { normalizePhone, isNoiseMessage } from '@repo/rules';
 import type { Logger } from 'pino';
 import { processGroupMessage } from './group-message.js';
+import { withAiCost } from '../lib/ai-cost.js';
 
 export async function processInboundMessage(job: InboundMessageJob, log: Logger): Promise<void> {
   // Группа — отдельный пайплайн (ADR 0008): копим ленту в дневной буфер, вечером
@@ -44,6 +45,13 @@ export async function processInboundMessage(job: InboundMessageJob, log: Logger)
   // Пустые сообщения (стикеры, фото без подписи) AI не разбирает ни в одну сторону.
   if (job.text.trim() === '') return;
 
+  // Дешёвый префильтр: голый шум («ок», «спасибо», эмодзи без цифр) LLM не разбираем —
+  // экономим Haiku на объёме. Касание (WhatsAppTouch) уже записано выше, счётчик не страдает.
+  if (isNoiseMessage(job.text)) {
+    log.debug({ greenApiMessageId: job.greenApiMessageId }, 'Сообщение отфильтровано как шум — AI пропущен');
+    return;
+  }
+
   if (!process.env['ANTHROPIC_API_KEY']) {
     log.warn({ greenApiMessageId: job.greenApiMessageId }, 'ANTHROPIC_API_KEY not set — skipping AI');
     return;
@@ -60,7 +68,16 @@ export async function processInboundMessage(job: InboundMessageJob, log: Logger)
   }
 
   // ВХОДЯЩЕЕ — ответ клиента на напоминание об оплате.
-  const parsed = await parseReply(client, job.text, new Date(job.receivedAt));
+  const parsed = await withAiCost(
+    {
+      scenario: 'parse-reply',
+      organizationId: job.organizationId,
+      inputSummary: `len=${job.text.length}`,
+      log,
+    },
+    (onUsage) => parseReply(client, job.text, new Date(job.receivedAt), onUsage),
+    (r) => `intent=${r.intent}`,
+  );
 
   log.info(
     {
@@ -84,7 +101,16 @@ async function handleManagerBalance(
   client: ReturnType<typeof createAiClient>,
   log: Logger,
 ): Promise<void> {
-  const extracted = await extractDebtBalance(client, job.text);
+  const extracted = await withAiCost(
+    {
+      scenario: 'extract-balance',
+      organizationId: job.organizationId,
+      inputSummary: `len=${job.text.length}`,
+      log,
+    },
+    (onUsage) => extractDebtBalance(client, job.text, onUsage),
+    (r) => `hasBalance=${r.hasBalance},kind=${r.kind}`,
+  );
   if (!extracted.hasBalance || extracted.balanceUsd == null) return;
 
   // Идемпотентность (ADR 0010): одно сообщение = одно событие. Повторная доставка

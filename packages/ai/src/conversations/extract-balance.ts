@@ -1,5 +1,6 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
+import { reportUsage, type UsageSink } from '../pricing.js';
 
 const MODEL = 'claude-haiku-4-5-20251001';
 
@@ -20,7 +21,9 @@ const outputSchema = z.object({
 export async function extractDebtBalance(
   client: Anthropic,
   messageText: string,
+  onUsage?: UsageSink,
 ): Promise<ExtractedBalance> {
+  const startedAt = Date.now();
   const message = await client.messages.create({
     model: MODEL,
     max_tokens: 150,
@@ -49,6 +52,8 @@ export async function extractDebtBalance(
       },
     ],
   });
+
+  reportUsage(onUsage, MODEL, message.usage, startedAt);
 
   const raw = message.content[0];
   if (!raw || raw.type !== 'text') throw new Error('Unexpected AI response type');

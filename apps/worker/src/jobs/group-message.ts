@@ -3,6 +3,7 @@ import { prisma } from '@repo/db';
 import { createAiClient, parseReceipt } from '@repo/ai';
 import type { ReceiptMedia, ParsedReceipt } from '@repo/ai';
 import type { Logger } from 'pino';
+import { withAiCost } from '../lib/ai-cost.js';
 
 // Захват ленты рабочей WhatsApp-ГРУППЫ «чеки» в дневной буфер (ADR 0008). Групповые
 // сообщения НЕ идут в счётчик покрытия (ADR 0006). Копим за сутки ВСЁ: текст и
@@ -82,7 +83,16 @@ async function parseGroupMedia(job: InboundMessageJob, log: Logger): Promise<str
     return null;
   }
 
-  const parsed = await parseReceipt(createAiClient(), media);
+  const parsed = await withAiCost(
+    {
+      scenario: 'parse-receipt',
+      organizationId: job.organizationId,
+      inputSummary: `${media.mediaType},${Math.round(media.data.length * 0.75)}b`,
+      log,
+    },
+    (onUsage) => parseReceipt(createAiClient(), media, onUsage),
+    (r) => `docType=${r.docType}`,
+  );
   // OTHER (фото товара, случайное) в буфер не кладём — не про долг.
   if (parsed.docType === 'OTHER') {
     log.info({ greenApiMessageId: job.greenApiMessageId }, 'Vision: документ не про долг (OTHER) — не буферим');
